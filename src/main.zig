@@ -27,28 +27,15 @@ pub fn main() !void {
     var camera_controller = zune.graphics.CameraMouseController.init(&gameSetup.camera,
     @as(f32, @floatCast(initial_mouse_pos.x)), @as(f32, @floatCast(initial_mouse_pos.y)));    
 
+
+
     // === Create resources === //
 
-    // const texture = try zune.graphics.Texture.createFromFile(allocator, "assets/textures/txtr.png");
     const texture = try resource_manager.createTexture("assets/textures/txtr.png");
-    // const texture = try resource_manager.createTexture("assets/models/Dune/colormap.png");
-    // const texture = try resource_manager.createTexture("assets/models/GrassCube/Grass_Block_TEX.png");
-
-    // const shader = try zune.graphics.Shader.createTextureShader(allocator);
     const shader = try resource_manager.createTextureShader();
-
-    // const material = try zune.graphics.Material.create(allocator, shader, .{ 1.0, 1.0, 1.0, 1.0 }, texture);
-    const material = try resource_manager.createMaterial("mapMaterial", shader, .{ 1.0, 1.0, 1.0, 1.0 }, texture);
-
-    // const cube_mesh = try zune.graphics.Mesh.createCube(allocator);
+    const material = try resource_manager.createMaterial("player_material", shader, .{ 1.0, 1.0, 1.0, 1.0 }, texture);
     const cube_mesh = try resource_manager.createCubeMesh();
-    // const cube_mesh = try util.importObj(resource_manager, "assets/models/Dune/lowresmodel.obj");
-    // try util.importObjRobust(resource_manager, "assets/models/GrassCube/Grass_Block.obj");
-    // const cube_mesh = try util.importObj(resource_manager, "assets/models/GrassCube/Grass_Block.obj");
-
-    // var cube_model = try resource_manager.createModel("MapModel");
-    var cube_model = try resource_manager.createModel("CubeModel");
-    // var cube_model = try zune.graphics.Model.create(allocator);
+    var cube_model = try resource_manager.createModel("cube_model");
 
     try cube_model.addMeshMaterial(cube_mesh, material);
 
@@ -61,7 +48,6 @@ pub fn main() !void {
     try gameSetup.ecs.registerComponent(zune.ecs.components.ModelComponent);
 
     try gameSetup.ecs.registerComponent(Velocity);
-    try gameSetup.ecs.registerComponent(Lifetime);
 
 
     // Create random generater
@@ -86,13 +72,9 @@ pub fn main() !void {
 
         // Random velocity
         try gameSetup.ecs.addComponent(entity, Velocity{
-            .x = (random.float(f32) - 0.5) * 0.2,
-            .y = (random.float(f32) - 0.5) * 0.2,
-        });
-        
-        // Random lifetime
-        try gameSetup.ecs.addComponent(entity, Lifetime{
-            .remaining = random.float(f32) * 10.0,
+            .x = 0.1,
+            .y = 0.1,
+            .z = 0.1,
         });
 
         // Set Model to render
@@ -107,16 +89,16 @@ pub fn main() !void {
         try gameSetup.input.update();
 
         // ==== Process Input ==== \\     
-                const mouse_pos = gameSetup.input.getMousePosition();   
+        const mouse_pos = gameSetup.input.getMousePosition();   
         camera_controller.handleMouseMovement(@as(f32, @floatCast(mouse_pos.x)), @as(f32, @floatCast(mouse_pos.y)), 1.0 / 60.0);
 
-        // try updatePhysics(gameSetup.ecs);
+        try playerControlsSystem(gameSetup.ecs, gameSetup.input);
 
         if(gameSetup.input.isKeyReleased(.KEY_ESCAPE)) break;
 
         gameSetup.renderer.clear();
         
-        try render(gameSetup.ecs, gameSetup.camera);
+        try renderSystem(gameSetup.ecs, gameSetup.camera);
 
         gameSetup.window.pollEvents();
         gameSetup.window.swapBuffers();   
@@ -130,40 +112,47 @@ pub fn main() !void {
 const Velocity = struct {
     x: f32,
     y: f32,
-};
-
-const Lifetime = struct {
-    remaining: f32,
+    z: f32,
 };
 
 
 
 
 
-fn updatePhysics(registry: *zune.ecs.Registry) !void {
+fn playerControlsSystem(registry: *zune.ecs.Registry, input: *zune.core.Input) !void {
 
     var query = try registry.query(struct {
         transform: *zune.ecs.components.TransformComponent,
         velocity: *Velocity,
-        life: *Lifetime,
     });
 
     while (try query.next()) |components| {
 
         // Update position
-        components.transform.position[0] += components.velocity.x;
-        components.transform.position[1] += components.velocity.y;
+        if(input.isKeyHeld(.KEY_W)) {
+            std.debug.print("thingy\n", .{});
+            components.transform.position[2] += components.velocity.z;
+        }
+        
+        if(input.isKeyPressed(.KEY_S)) {
+            std.debug.print("thingy s\n", .{});
+            components.transform.position[2] -= components.velocity.z;
+        }
 
-        // Update lifetime
-        components.life.remaining -= 1.0 / 60.0;
-
-        // rotate model
-        components.transform.rotate(0.01, 0.01, 0.0);
+        if(input.isKeyPressed(.KEY_D)) {
+            std.debug.print("thingy\n", .{});
+            components.transform.position[0] += components.velocity.x;
+        }
+        
+        if(input.isKeyPressed(.KEY_A)) {
+            std.debug.print("thingy s\n", .{});
+            components.transform.position[0] -= components.velocity.x;
+        }
     }
 }
 
 
-pub fn render(registry: *zune.ecs.Registry, camera: zune.graphics.Camera) !void {
+pub fn renderSystem(registry: *zune.ecs.Registry, camera: zune.graphics.Camera) !void {
     // Query for entities with all required components
     var query = try registry.query(struct {
         transform: *zune.ecs.components.TransformComponent,
