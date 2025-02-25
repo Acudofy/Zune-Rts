@@ -31,7 +31,7 @@ pub fn main() !void {
     const texture = try resource_manager.createTexture("assets/textures/txtr.png");
     const shader = try resource_manager.createTextureShader();
     const material = try resource_manager.createMaterial("player_material", shader, .{ 1.0, 1.0, 1.0, 1.0 }, texture);
-    const cube_mesh = try resource_manager.createCubeMesh();
+    const cube_mesh = try util.importZMeshObj(resource_manager, "assets/models/Dune/lowresmodel.obj", "MapMesh");
     var cube_model = try resource_manager.createModel("cube_model");
 
     try cube_model.addMeshMaterial(cube_mesh, material);
@@ -45,8 +45,6 @@ pub fn main() !void {
     try gameSetup.ecs.registerComponent(Velocity);
 
     // Create random generater
-    var prng = std.Random.DefaultPrng.init(0);
-    var random = prng.random();
 
     // Spawn 1 particle entities
     var i: usize = 0;
@@ -115,6 +113,7 @@ fn playerControlsSystem(registry: *zune.ecs.Registry, input: *zune.core.Input) !
             std.debug.print("thingy\n", .{});
             components.transform.position[2] += components.velocity.z;
         }
+        if (input.isKeyReleased(.KEY_W)) {}
 
         if (input.isKeyPressed(.KEY_S)) {
             std.debug.print("thingy s\n", .{});

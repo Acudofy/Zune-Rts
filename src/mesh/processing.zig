@@ -4,8 +4,8 @@ const zune = @import("zune");
 const zmath = zune.math;
 const Vec3 = zmath.Vec3;
 
-const math = @import("math.zig");
-const MN = @import("globals.zig");
+const math = @import("../math.zig");
+const MN = @import("../globals.zig");
 
 const Allocator: type = std.mem.Allocator;
 

@@ -20,8 +20,22 @@ const fileError = error{
 
 const ParseFun = union(enum) { intParse: @TypeOf(std.fmt.parseInt), floatParse: @TypeOf(std.fmt.parseFloat) };
 
-/// Import .obj file to mesh TODO: Make return union between zune Mesh & PHMesh depending on `toMesh` bool.
-pub fn importObjRobust(resourceManager: *zune.graphics.ResourceManager, obj_file: []const u8, meshName: []const u8, toMesh: bool) !*zune.graphics.Mesh {
+const OfMesh = union(enum) { zMesh: *zune.graphics.Mesh, phMesh: PHMesh };
+
+// ===== Thin wrappers for importObj function =====
+
+pub fn importZMeshObj(resourceManager: *zune.graphics.ResourceManager, obj_file: []const u8, meshName: []const u8) !*zune.graphics.Mesh {
+    const result = try importObj(resourceManager, obj_file, meshName, true);
+    return result.zMesh;
+}
+
+pub fn importPHMeshObj(resourceManager: *zune.graphics.ResourceManager, obj_file: []const u8) !PHMesh {
+    const result = try importObj(resourceManager, obj_file, "", false);
+    return result.phMesh;
+}
+
+/// Import .obj file to OfMesh depending on toMesh
+fn importObj(resourceManager: *zune.graphics.ResourceManager, obj_file: []const u8, meshName: []const u8, toMesh: bool) !OfMesh {
     // ===== Initialize variables =====
     // Take allocator from resourceManager
     const allocator = resourceManager.allocator;
@@ -38,7 +52,7 @@ pub fn importObjRobust(resourceManager: *zune.graphics.ResourceManager, obj_file
     defer lineBuf.deinit();
 
     // ===== Read vertices =====
-    const verticeInfo =
+    const verticeInfo: readInfo(f32) =
         try storeLineInfo(allocator, f32, &buffered, "v ", .{ .lineBuf = &lineBuf });
     defer allocator.free(verticeInfo.values);
 
@@ -47,7 +61,7 @@ pub fn importObjRobust(resourceManager: *zune.graphics.ResourceManager, obj_file
     std.debug.print("read vertices...\n", .{});
 
     // ===== Read UVs =====
-    const uvInfo =
+    const uvInfo: readInfo(f32) =
         try storeLineInfo(allocator, f32, &buffered, "vt ", .{ .lineBuf = &lineBuf, .readCapacity = vertexCount });
     // errdefer allocator.free(uvInfo.values);
     defer allocator.free(uvInfo.values);
@@ -70,7 +84,7 @@ pub fn importObjRobust(resourceManager: *zune.graphics.ResourceManager, obj_file
     if (normalsExist) std.debug.print("read normals...\n", .{}) else std.debug.print("No normals...\n", .{});
 
     // ----- Create struct -----
-    const vertexNormalsInfo = switch (normalsExist) {
+    const vertexNormalsInfo: ?readInfo(f32) = switch (normalsExist) {
         true => try storeLineInfo(allocator, f32, &buffered, "vn ", .{ .lineBuf = &lineBuf, .readCapacity = vertexCount }),
         false => null,
     };
@@ -78,13 +92,13 @@ pub fn importObjRobust(resourceManager: *zune.graphics.ResourceManager, obj_file
     defer if (vertexNormalsInfo) |normInfo| allocator.free(normInfo.values);
 
     // ===== Read indices =====
-    const indiceInfo =
+    const indiceInfo: readInfo(u32) =
         try storeLineInfo(allocator, u32, &buffered, "f ", .{
-        .lineBuf = &lineBuf,
-        .readCapacity = vertexCount,
-        .subdivider = '/',
-        .lineValueCount = 12,
-    });
+            .lineBuf = &lineBuf,
+            .readCapacity = vertexCount,
+            .subdivider = '/',
+            .lineValueCount = 12,
+        });
     // errdefer allocator.free(indiceInfo.values);
     defer allocator.free(indiceInfo.values);
 
@@ -133,11 +147,69 @@ pub fn importObjRobust(resourceManager: *zune.graphics.ResourceManager, obj_file
     }
     for (0..triIndices.len) |i| triIndices[i] -= 1; // Make indices start from 0
 
-    // ===== Reshape items =====
-    // ----- Create storage -----
-    const b: usize = 8; // if(normalsExist) 8 else 5; // Always add shaders
-    const Data = try allocator.alloc(f32, indiceCount * b);
-    const indices = try allocator.alloc(u32, indiceCount); // Final vertex indices in form 1 2 3
+    // ===== Create meshes =====
+    switch (toMesh) {
+        false => {
+            const result = try assemblePHMesh(allocator, .{
+                .triangleCount = triangleCount,
+                .indiceCount = indiceCount,
+                .indiceLen = indiceLen,
+                .triIndices = triIndices,
+            }, .{
+                .vertexCount = vertexCount,
+                .verticeInfo = verticeInfo,
+            }, uvInfo, vertexNormalsInfo, normalsExist);
+            return .{ .phMesh = result };
+        },
+        true => {
+            const zMeshComponents = try assembleZMesh(allocator, .{
+                .triangleCount = triangleCount,
+                .indiceCount = indiceCount,
+                .indiceLen = indiceLen,
+                .triIndices = triIndices,
+            }, .{
+                .vertexCount = vertexCount,
+                .verticeInfo = verticeInfo,
+            }, uvInfo, vertexNormalsInfo, normalsExist);
+
+            const result = try resourceManager.createMesh(meshName, zMeshComponents.data, zMeshComponents.indices, true);
+            std.debug.print("Uploaded mesh...\n", .{});
+            allocator.free(zMeshComponents.data);
+            allocator.free(zMeshComponents.indices);
+
+            return .{ .zMesh = result };
+        },
+    }
+}
+
+const IndiceContext = struct {
+    triangleCount: usize,
+    indiceCount: usize,
+    indiceLen: usize,
+    triIndices: []u32,
+};
+
+const VertexContext = struct {
+    vertexCount: usize,
+    verticeInfo: readInfo(f32),
+};
+
+fn assemblePHMesh(allocator: Allocator, indiceContext: IndiceContext, vertexContext: VertexContext, uvInfo: readInfo(f32), vertexNormalsInfo: ?readInfo(f32), hasNormals: bool) !PHMesh {
+    // ===== unpack contexts =====
+    const indiceLen = indiceContext.indiceLen;
+    const indiceCount = indiceContext.indiceCount;
+    const triIndices = indiceContext.triIndices;
+    const triangleCount = indiceContext.triangleCount;
+
+    const vertexCount = vertexContext.vertexCount;
+    const verticeInfo: readInfo(f32) = vertexContext.verticeInfo;
+
+    // ===== Create phMesh data structure and store read values =====
+    var vertices = try std.ArrayList(f32).initCapacity(allocator, vertexCount * 3);
+    var uv = try std.ArrayList(f32).initCapacity(allocator, vertexCount * 2);
+    var normals = try std.ArrayList(f32).initCapacity(allocator, vertexCount * 3);
+
+    const indices = try allocator.alloc(u32, indiceCount); // Final vertex indices in form 1 2 3 | 2 3 4 etc.
     defer allocator.free(indices);
 
     // ----- Create auxilirary variables -----
@@ -148,9 +220,138 @@ pub fn importObjRobust(resourceManager: *zune.graphics.ResourceManager, obj_file
     defer allocator.free(uniqueIndex);
     defer allocator.free(uniqueFound);
 
-    // ----- Start item reshaping according to indices
-    var i: usize = 0; // count of reformated indices
+    // ----- Start storing read-values -----
     var n: u32 = 0; // count of stored vertices
+    var i: usize = 0; // count of reformated indices
+    while (i < triangleCount * 3) : (i += 1) {
+        const indice = triIndices[i * indiceLen ..][0..indiceLen];
+        const vertexInd = indice[0];
+        // var vertexUnique = vertexUniques[vertexInd];
+
+        if (!uniqueFound[vertexInd]) { // if vertex index has not been found yet -> store vertex + metaData
+            // ----- Make unique vertex entry -----
+            uniqueFound[vertexInd] = true;
+            uniqueIndex[vertexInd] = n;
+            @memcpy(uniqueIndice[vertexInd * indiceLen ..][0..indiceLen], indice);
+
+            // ----- Copy values to new containers -----
+            try vertices.appendSlice(verticeInfo.values[vertexInd * verticeInfo.lineValueCount ..][0..3]); // vertex
+            try uv.appendSlice(uvInfo.values[indice[1] * uvInfo.lineValueCount ..][0..2]); // uv
+            if (vertexNormalsInfo) |normalsInfo| try normals.appendSlice(normalsInfo.values[indice[2] * 3 ..][0..3]); // normals
+
+            // ----- Store indicex -----
+            indices[i] = n;
+
+            n += 1;
+        } else if (std.mem.eql(u32, uniqueIndice[vertexInd * indiceLen ..][0..indiceLen], indice)) { // vertex has already been found, but has the same properties
+            indices[i] = uniqueIndex[vertexInd];
+        } else { // Vertex has been found, but with different properties
+            // ----- Copy values to new containers -----
+            try vertices.appendSlice(verticeInfo.values[vertexInd * verticeInfo.lineValueCount ..][0..3]); // vertex
+            try uv.appendSlice(uvInfo.values[indice[1] * uvInfo.lineValueCount ..][0..2]); // uv
+            if (vertexNormalsInfo) |normalsInfo| try normals.appendSlice(normalsInfo.values[indice[2] * 3 ..][0..3]); // normals
+
+            // ----- Store indicex -----
+            indices[i] = n;
+
+            n += 1;
+        }
+    }
+    std.debug.print("Made Data struct for phMesh...\n", .{});
+
+    // ===== Create Normals if not present =====
+    const Normals = switch (hasNormals) {
+        false => smtn: {
+            normals.deinit();
+
+            // ----- Create constants -----
+            const norms = try allocator.alloc(f32, n * 3);
+            const vecs = vertices.items;
+            const faceNormals = try allocator.alloc(zmath.Vec3, triangleCount);
+            defer allocator.free(faceNormals);
+
+            // ----- Find face normals -----
+            i = 0;
+            while (i < triangleCount) : (i += 1) {
+                const i_a: u32 = indices[i * 3];
+                const i_b: u32 = indices[i * 3 + 1];
+                const i_c: u32 = indices[i * 3 + 2];
+
+                const v1: zmath.Vec3 = zmath.Vec3{ .x = vecs[i_a * 3], .y = vecs[i_a * 3 + 1], .z = vecs[i_a * 3 + 2] };
+                const v2: zmath.Vec3 = zmath.Vec3{ .x = vecs[i_b * 3], .y = vecs[i_b * 3 + 1], .z = vecs[i_b * 3 + 2] };
+                const v3: zmath.Vec3 = zmath.Vec3{ .x = vecs[i_c * 3], .y = vecs[i_c * 3 + 1], .z = vecs[i_c * 3 + 2] };
+
+                faceNormals[i] = v2.subtract(v1).cross(v3.subtract(v1));
+            }
+
+            // ----- Find vertice normals -----
+            i = 0;
+            while (i < triangleCount) : (i += 1) {
+                const faceNormal = faceNormals[i]; // Find normal of face
+
+                for (indices[i * 3 .. i * 3 + 2]) |Iv| {
+                    // Add normal to vertex-normals
+                    norms[Iv * 3] += faceNormal.x;
+                    norms[Iv * 3 + 1] += faceNormal.y;
+                    norms[Iv * 3 + 2] += faceNormal.z;
+                }
+            }
+
+            // ----- Normalize vertex normals -----
+            i = 0;
+            while (i < vertexCount) : (i += 1) {
+                math.vec3normalize(norms[i * 3 ..][0..3]);
+            }
+            std.debug.print("Created normals...\n", .{});
+
+            break :smtn norms;
+        },
+        true => smtn: {
+            std.debug.print("normals already existed...\n", .{});
+            break :smtn try normals.toOwnedSlice();
+        },
+    };
+
+    // ===== Shorten allocated memory =====
+    const Vertices = try vertices.toOwnedSlice();
+    const Uv = try uv.toOwnedSlice();
+    return PHMesh{
+        .allocator = allocator,
+        .indices = indices,
+        .vertices = Vertices,
+        .texcoords = Uv,
+        .normals = Normals,
+        .triangleCount = @intCast(triangleCount),
+        .vertexCount = @intCast(n),
+    };
+}
+
+fn assembleZMesh(allocator: Allocator, indiceContext: IndiceContext, vertexContext: VertexContext, uvInfo: readInfo(f32), vertexNormalsInfo: ?readInfo(f32), hasNormals: bool) !struct { data: []f32, indices: []u32 } {
+    // ===== unpack contexts =====
+    const indiceLen = indiceContext.indiceLen;
+    const indiceCount = indiceContext.indiceCount;
+    const triIndices = indiceContext.triIndices;
+    const triangleCount = indiceContext.triangleCount;
+
+    const vertexCount = vertexContext.vertexCount;
+    const verticeInfo: readInfo(f32) = vertexContext.verticeInfo;
+
+    // ===== Create zMesh data structure and store read values =====
+    const b: usize = 8; // Amount of data points in single data-entree
+    const Data = try allocator.alloc(f32, indiceCount * b);
+    const indices = try allocator.alloc(u32, indiceCount); // Final vertex indices in form 1 2 3 | 2 3 4 etc.
+
+    // ----- Create auxilirary variables -----
+    const uniqueIndice = try allocator.alloc(u32, indiceLen * vertexCount);
+    const uniqueIndex = try allocator.alloc(u32, vertexCount);
+    const uniqueFound = try allocator.alloc(bool, vertexCount);
+    defer allocator.free(uniqueIndice);
+    defer allocator.free(uniqueIndex);
+    defer allocator.free(uniqueFound);
+
+    // ----- Start storing read-values -----
+    var n: u32 = 0; // count of stored vertices
+    var i: usize = 0; // count of reformated indices
     while (i < triangleCount * 3) : (i += 1) {
         const indice = triIndices[i * indiceLen ..][0..indiceLen];
         const vertexInd = indice[0];
@@ -185,10 +386,10 @@ pub fn importObjRobust(resourceManager: *zune.graphics.ResourceManager, obj_file
             n += 1;
         }
     }
-    std.debug.print("Made Data struct...\n", .{});
+    std.debug.print("Made Data struct for zMeshg...\n", .{});
 
     // ===== Create Normals if not present =====
-    if (normalsExist) {
+    if (!hasNormals) {
         // ----- Find face normals -----
         const faceNormals = try allocator.alloc(zmath.Vec3, triangleCount);
         defer allocator.free(faceNormals);
@@ -231,11 +432,9 @@ pub fn importObjRobust(resourceManager: *zune.graphics.ResourceManager, obj_file
 
     // ===== Shorten allocated memory =====
     const new_vertexCount = n;
+    std.debug.print("new_vertexCount: {}\n", .{new_vertexCount});
     const data: []f32 = try allocator.realloc(Data, new_vertexCount * b);
-    defer allocator.free(data);
-    const result = try resourceManager.createMesh(meshName, data, indices, true);
-    std.debug.print("toMesh: {}\n", .{toMesh});
-    return result;
+    return .{ .data = data, .indices = indices };
 }
 
 /// Context for `storeLineInfo`.
@@ -246,6 +445,13 @@ pub const StoreLineContext = struct {
     subdivider: ?u8 = null, // subdivider needed for e.g. "preceder|x0/x1/x2 y0/y1/y2 ...\n"
 };
 
+fn readInfo(T: type) type {
+    return struct {
+        values: []T,
+        lineValueCount: usize,
+    };
+}
+
 /// Returns values in file which are in subsequent lines, allongside the amount of values read in a single line.
 /// Assumes lines are formated as follows: '`linePreceder`|value value ... value\n'
 /// Makes use of a valuebuffer to minimize calls to `ArrayList(T).append()`.
@@ -253,7 +459,7 @@ pub const StoreLineContext = struct {
 /// `bufferedReader` should be reading the file.
 /// `lineBuf` in `context` is used to store lines.
 /// `lineValueCount` in `context` should be the maximum expected amount of values in a line.
-pub fn storeLineInfo(allocator: Allocator, comptime T: type, bufferedReader: anytype, linePreceder: []const u8, context: StoreLineContext) !struct { values: []T, lineValueCount: usize } {
+pub fn storeLineInfo(allocator: Allocator, comptime T: type, bufferedReader: anytype, linePreceder: []const u8, context: StoreLineContext) !readInfo(T) {
 
     // ===== Initialize auxilirary variables =====
     const valueBuf = try allocator.alloc(T, context.lineValueCount); // Used to store before appending to reduce calls to array.append
