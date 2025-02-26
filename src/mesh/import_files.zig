@@ -210,7 +210,6 @@ fn assemblePHMesh(allocator: Allocator, indiceContext: IndiceContext, vertexCont
     var normals = try std.ArrayList(f32).initCapacity(allocator, vertexCount * 3);
 
     const indices = try allocator.alloc(u32, indiceCount); // Final vertex indices in form 1 2 3 | 2 3 4 etc.
-    defer allocator.free(indices);
 
     // ----- Create auxilirary variables -----
     const uniqueIndice = try allocator.alloc(u32, indiceLen * vertexCount);

@@ -1,6 +1,7 @@
 const std = @import("std");
 const zune = @import("zune");
 const util = @import("mesh/import_files.zig");
+const mesh = @import("mesh/processing.zig");
 
 const MN = @import("globals.zig");
 
@@ -31,10 +32,19 @@ pub fn main() !void {
     const texture = try resource_manager.createTexture("assets/textures/txtr.png");
     const shader = try resource_manager.createTextureShader();
     const material = try resource_manager.createMaterial("player_material", shader, .{ 1.0, 1.0, 1.0, 1.0 }, texture);
-    const cube_mesh = try util.importZMeshObj(resource_manager, "assets/models/Dune/lowresmodel.obj", "MapMesh");
-    var cube_model = try resource_manager.createModel("cube_model");
+    // const cube_mesh = try util.importZMeshObj(resource_manager, "assets/models/Dune/lowresmodel.obj", "MapMesh");
 
-    try cube_model.addMeshMaterial(cube_mesh, material);
+    var phMapMesh = try util.importPHMeshObj(resource_manager, "assets/models/Dune/lowresmodel.obj");
+    // mesh.zeroMesh(phMapMesh);
+    // std.debug.print("BBMap: {any}\n", .{phMapMesh.getBoundingBox()});
+    // const phMapSlices = try mesh.splitMesh(allocator, phMapMesh, .{ .x = 2000 }, .{ .z = 1 });
+    // defer phMapSlices[1].deinit();
+    // const cube_mesh = try phMapSlices[0].toMesh(resource_manager, "MapMesh");
+
+    // var cube_model = try resource_manager.createModel("cube_model");
+    const cube_model = try mesh.chunkMesh2Model(resource_manager, &phMapMesh, material, 10, 10, "MapModel");
+
+    // try cube_model.addMeshMaterial(cube_mesh, material);
 
     // --- Setup the ECS system --- //
 
@@ -107,27 +117,29 @@ fn playerControlsSystem(registry: *zune.ecs.Registry, input: *zune.core.Input) !
     });
 
     while (try query.next()) |components| {
-
         // Update position
-        if (input.isKeyHeld(.KEY_W)) {
-            std.debug.print("thingy\n", .{});
+        if (input.isKeyHeld(.KEY_W) or input.isKeyPressed(.KEY_W)) {
+            //std.debug.print("W\n", .{});
+            components.velocity.z = -10;
             components.transform.position[2] += components.velocity.z;
         }
-        if (input.isKeyReleased(.KEY_W)) {}
 
-        if (input.isKeyPressed(.KEY_S)) {
-            std.debug.print("thingy s\n", .{});
-            components.transform.position[2] -= components.velocity.z;
+        if (input.isKeyHeld(.KEY_S) or input.isKeyPressed(.KEY_S)) {
+            //std.debug.print("S\n", .{});
+            components.velocity.z = 10;
+            components.transform.position[2] += components.velocity.z;
         }
 
-        if (input.isKeyPressed(.KEY_D)) {
-            std.debug.print("thingy\n", .{});
+        if (input.isKeyHeld(.KEY_D) or input.isKeyPressed(.KEY_D)) {
+            //std.debug.print("D\n", .{});
+            components.velocity.x = 10;
             components.transform.position[0] += components.velocity.x;
         }
 
-        if (input.isKeyPressed(.KEY_A)) {
-            std.debug.print("thingy s\n", .{});
-            components.transform.position[0] -= components.velocity.x;
+        if (input.isKeyHeld(.KEY_A) or input.isKeyPressed(.KEY_A)) {
+            //std.debug.print("A\n", .{});
+            components.velocity.x = -10;
+            components.transform.position[0] += components.velocity.x;
         }
     }
 }
