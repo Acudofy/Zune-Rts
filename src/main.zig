@@ -5,6 +5,7 @@ const mesh = @import("mesh/processing.zig");
 
 const MN = @import("globals.zig");
 
+const Map = @import("world/map.zig").Map;
 const GameSetup = @import("game_setup.zig").GameSetup;
 
 pub fn main() !void {
@@ -32,19 +33,11 @@ pub fn main() !void {
     const texture = try resource_manager.createTexture("assets/textures/txtr.png");
     const shader = try resource_manager.createTextureShader();
     const material = try resource_manager.createMaterial("player_material", shader, .{ 1.0, 1.0, 1.0, 1.0 }, texture);
-    // const cube_mesh = try util.importZMeshObj(resource_manager, "assets/models/Dune/lowresmodel.obj", "MapMesh");
 
-    var phMapMesh = try util.importPHMeshObj(resource_manager, "assets/models/Dune/lowresmodel.obj");
-    // mesh.zeroMesh(phMapMesh);
-    // std.debug.print("BBMap: {any}\n", .{phMapMesh.getBoundingBox()});
-    // const phMapSlices = try mesh.splitMesh(allocator, phMapMesh, .{ .x = 2000 }, .{ .z = 1 });
-    // defer phMapSlices[1].deinit();
-    // const cube_mesh = try phMapSlices[0].toMesh(resource_manager, "MapMesh");
-
-    // var cube_model = try resource_manager.createModel("cube_model");
-    const cube_model = try mesh.chunkMesh2Model(resource_manager, &phMapMesh, material, 10, 10, "MapModel");
-
-    // try cube_model.addMeshMaterial(cube_mesh, material);
+    const map = try Map.init(resource_manager, "assets/models/Dune/lowresmodel.obj", material, .{ .x = 100, .y = 20, .z = 100 }, .{.x = 5, .y = 5}, "MapModel");
+    const cube_model = map.model;
+    // var phMapMesh = try util.importPHMeshObj(resource_manager, "assets/models/Dune/lowresmodel.obj");
+    // const cube_model = (try mesh.chunkMesh2Model(resource_manager, &phMapMesh, material, 5, 5, "fds", false)).model;
 
     // --- Setup the ECS system --- //
 
@@ -91,7 +84,7 @@ pub fn main() !void {
         const mouse_pos = gameSetup.input.getMousePosition();
         camera_controller.handleMouseMovement(@as(f32, @floatCast(mouse_pos.x)), @as(f32, @floatCast(mouse_pos.y)), 1.0 / 60.0);
 
-        try playerControlsSystem(gameSetup.ecs, gameSetup.input);
+        cameraControl(gameSetup.input, &gameSetup.camera);
 
         if (gameSetup.input.isKeyReleased(.KEY_ESCAPE)) break;
 
@@ -110,37 +103,29 @@ const Velocity = struct {
     z: f32,
 };
 
-fn playerControlsSystem(registry: *zune.ecs.Registry, input: *zune.core.Input) !void {
-    var query = try registry.query(struct {
-        transform: *zune.ecs.components.TransformComponent,
-        velocity: *Velocity,
-    });
+pub fn cameraControl(input: *zune.core.Input, camera: *zune.graphics.Camera) void {
+    var forward = camera.getForwardVector();
+    forward.z = 0;
+    forward = forward.normalize();
+    const side = forward.cross(.{ .y = 1 });
+    
+    const v: f32 = 10.0;
 
-    while (try query.next()) |components| {
-        // Update position
-        if (input.isKeyHeld(.KEY_W) or input.isKeyPressed(.KEY_W)) {
-            //std.debug.print("W\n", .{});
-            components.velocity.z = -10;
-            components.transform.position[2] += components.velocity.z;
-        }
+    // Update position
+    if (input.isKeyHeld(.KEY_W)) {
+        camera.setPosition(camera.position.add(forward.scale(v)));
+    }
 
-        if (input.isKeyHeld(.KEY_S) or input.isKeyPressed(.KEY_S)) {
-            //std.debug.print("S\n", .{});
-            components.velocity.z = 10;
-            components.transform.position[2] += components.velocity.z;
-        }
+    if (input.isKeyHeld(.KEY_S)) {
+        camera.setPosition(camera.position.add(forward.scale(-v)));
+    }
 
-        if (input.isKeyHeld(.KEY_D) or input.isKeyPressed(.KEY_D)) {
-            //std.debug.print("D\n", .{});
-            components.velocity.x = 10;
-            components.transform.position[0] += components.velocity.x;
-        }
+    if (input.isKeyHeld(.KEY_D)) {
+        camera.setPosition(camera.position.add(side.scale(v)));
+    }
 
-        if (input.isKeyHeld(.KEY_A) or input.isKeyPressed(.KEY_A)) {
-            //std.debug.print("A\n", .{});
-            components.velocity.x = -10;
-            components.transform.position[0] += components.velocity.x;
-        }
+    if (input.isKeyHeld(.KEY_A)) {
+        camera.setPosition(camera.position.add(side.scale(-v)));
     }
 }
 

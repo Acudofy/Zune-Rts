@@ -41,8 +41,9 @@ pub fn zeroMesh(mesh: PlaceHolderMesh) void {
 }
 
 /// Generate equispaced chunks from `mesh` according amount specified in `XChunks` and `YChunks`
+/// if `keepPH`, will not deinit intermediate created placeholder Meshes. if set to false, pointers will be invalid
 /// Deinits provided `mesh`.
-pub fn chunkMesh(resourceManager: *zune.graphics.ResourceManager, mesh: *PlaceHolderMesh, XChunks: usize, ZChunks: usize) ![]*zune.graphics.Mesh {
+pub fn chunkMesh(resourceManager: *zune.graphics.ResourceManager, mesh: *PlaceHolderMesh, XChunks: usize, ZChunks: usize, keepPH: bool) !struct{meshes: []*zune.graphics.Mesh, phMeshes: []PlaceHolderMesh} {
     const allocator = resourceManager.allocator;
 
     // ===== Ensure valid boundingBox in mesh =====
@@ -67,23 +68,34 @@ pub fn chunkMesh(resourceManager: *zune.graphics.ResourceManager, mesh: *PlaceHo
     }
 
     // ===== Convert meshes to zMeshes =====
-    const result = try allocator.alloc(*zune.graphics.Mesh, totChunks);
+    const result: []*zune.graphics.Mesh = try allocator.alloc(*zune.graphics.Mesh, totChunks);
     for (0..totChunks) |i| {
-        result[i] = try meshes[i].toMesh(resourceManager, try std.fmt.allocPrint(allocator, "Chunk{}{}", .{ @rem(i, XChunks), @divFloor(i, XChunks) }));
+        result[i] = try meshes[i].toMesh(
+            resourceManager, 
+            try std.fmt.allocPrint(allocator, "Chunk{}{}",.{ @rem(i, XChunks), @divFloor(i, XChunks) }), 
+            !keepPH);
     }
 
-    return result;
+    // ===== Free memory =====
+    if(!keepPH) allocator.free(meshes);
+
+    // ===== Return =====
+    return .{
+        .meshes = result,
+        .phMeshes = meshes,
+    };
 }
 
-/// wrapper around `chunkMesh` but returns a single model including all meshes.
-pub fn chunkMesh2Model(resourceManager: *zune.graphics.ResourceManager, mesh: *PlaceHolderMesh, material: *zune.graphics.Material, XChunks: usize, ZChunks: usize, modelName: []const u8) !*zune.graphics.Model {
+/// wrapper around `chunkMesh` but returns a model which contains all meshes as well as the PlaceHolderMeshes for further processing.
+pub fn chunkMesh2Model(resourceManager: *zune.graphics.ResourceManager, mesh: *PlaceHolderMesh, material: *zune.graphics.Material, XChunks: usize, ZChunks: usize, modelName: []const u8, keepPH: bool) !struct{model: *zune.graphics.Model, phMeshes: []PlaceHolderMesh} {
     const allocator = resourceManager.allocator;
 
-    const meshes = try chunkMesh(resourceManager, mesh, XChunks, ZChunks);
-    const materials = try allocator.alloc(*zune.graphics.Material, meshes.len);
+    const chunks = try chunkMesh(resourceManager, mesh, XChunks, ZChunks, keepPH);
+    const materials = try allocator.alloc(*zune.graphics.Material, chunks.meshes.len);
     var model = try resourceManager.createModel(modelName);
-    defer allocator.free(meshes);
+
     defer allocator.free(materials);
+    defer allocator.free(chunks.meshes);
 
     for (0..materials.len) |i| {
         const x = @rem(i, XChunks);
@@ -91,11 +103,11 @@ pub fn chunkMesh2Model(resourceManager: *zune.graphics.ResourceManager, mesh: *P
         materials[i] = try resourceManager.createMaterial(try std.fmt.allocPrint(allocator, "Mat{}{}", .{ x, z }), material.shader, material.color, material.texture);
     }
 
-    for (meshes, materials) |chunk, chunkMat| {
+    for (chunks.meshes, materials) |chunk, chunkMat| {
         try model.addMeshMaterial(chunk, chunkMat);
     }
 
-    return model;
+    return .{.model = model, .phMeshes = chunks.phMeshes};
 }
 
 // ======================================
@@ -492,13 +504,13 @@ pub const PlaceHolderMesh = struct {
         return box;
     }
 
-    /// Returns a zune.Mesh type, deinits self
-    pub fn toMesh(self: PlaceHolderMesh, resourceManager: *zune.graphics.ResourceManager, meshName: []const u8) !*zune.graphics.Mesh {
+    /// Returns a zune.Mesh type, deinit self if `doDeinit` is `true`.
+    pub fn toMesh(self: PlaceHolderMesh, resourceManager: *zune.graphics.ResourceManager, meshName: []const u8, doDeinit: bool) !*zune.graphics.Mesh {
 
         // ----- Create rl.Mesh to upload and return -----
         const data = try self.interweave();
         const result = try resourceManager.createMesh(meshName, data, self.indices, true);
-        self.deinit();
+        if (doDeinit) self.deinit();
         self.allocator.free(data);
         return result;
     }
