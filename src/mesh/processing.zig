@@ -8,6 +8,7 @@ const math = @import("../math.zig");
 const MN = @import("../globals.zig");
 
 const Allocator: type = std.mem.Allocator;
+const OfMeshName = @import("import_files.zig").OfMeshName; 
 
 // ======================================
 // Error definition and type declations
@@ -24,13 +25,23 @@ const MeshError = error{
 // Public functions
 // ======================================
 
-pub fn moveMesh(mesh: PlaceHolderMesh, dist: Vec3) void {
+/// move all `mesh` vertices +`dist`
+pub fn moveMesh(mesh: PlaceHolderMesh, dist: Vec3(f32)) void {
     // Alters mesh vertices dist from original spot
     var i: usize = 0;
     while (i < mesh.vertexCount) : (i += 1) {
         mesh.vertices[i * 3] += dist.x;
         mesh.vertices[i * 3 + 1] += dist.y;
         mesh.vertices[i * 3 + 2] += dist.z;
+    }
+}
+
+pub fn scaleMesh(mesh: PlaceHolderMesh, scaling: Vec3(f32)) void {
+    var i: usize = 0;
+    while (i < mesh.vertexCount) : (i += 1) {
+        mesh.vertices[i * 3] *= scaling.x;
+        mesh.vertices[i * 3 + 1] *= scaling.y;
+        mesh.vertices[i * 3 + 2] *= scaling.z;
     }
 }
 
@@ -43,7 +54,7 @@ pub fn zeroMesh(mesh: PlaceHolderMesh) void {
 /// Generate equispaced chunks from `mesh` according amount specified in `XChunks` and `YChunks`
 /// if `keepPH`, will not deinit intermediate created placeholder Meshes. if set to false, pointers will be invalid
 /// Deinits provided `mesh`.
-pub fn chunkMesh(resourceManager: *zune.graphics.ResourceManager, mesh: *PlaceHolderMesh, XChunks: usize, ZChunks: usize, keepPH: bool) !struct{meshes: []*zune.graphics.Mesh, phMeshes: []PlaceHolderMesh} {
+pub fn chunkMesh(resourceManager: *zune.graphics.ResourceManager, mesh: *PlaceHolderMesh, chunkName: []const u8, XChunks: usize, ZChunks: usize, keepPH: bool) !struct{meshes: []*zune.graphics.Mesh, phMeshes: []PlaceHolderMesh} {
     const allocator = resourceManager.allocator;
 
     // ===== Ensure valid boundingBox in mesh =====
@@ -72,7 +83,7 @@ pub fn chunkMesh(resourceManager: *zune.graphics.ResourceManager, mesh: *PlaceHo
     for (0..totChunks) |i| {
         result[i] = try meshes[i].toMesh(
             resourceManager, 
-            try std.fmt.allocPrint(allocator, "Chunk{}{}",.{ @rem(i, XChunks), @divFloor(i, XChunks) }), 
+            .{.meshPrefix = chunkName}, 
             !keepPH);
     }
 
@@ -90,21 +101,13 @@ pub fn chunkMesh(resourceManager: *zune.graphics.ResourceManager, mesh: *PlaceHo
 pub fn chunkMesh2Model(resourceManager: *zune.graphics.ResourceManager, mesh: *PlaceHolderMesh, material: *zune.graphics.Material, XChunks: usize, ZChunks: usize, modelName: []const u8, keepPH: bool) !struct{model: *zune.graphics.Model, phMeshes: []PlaceHolderMesh} {
     const allocator = resourceManager.allocator;
 
-    const chunks = try chunkMesh(resourceManager, mesh, XChunks, ZChunks, keepPH);
-    const materials = try allocator.alloc(*zune.graphics.Material, chunks.meshes.len);
+    const chunks = try chunkMesh(resourceManager, mesh, modelName, XChunks, ZChunks, keepPH);
     var model = try resourceManager.createModel(modelName);
 
-    defer allocator.free(materials);
     defer allocator.free(chunks.meshes);
 
-    for (0..materials.len) |i| {
-        const x = @rem(i, XChunks);
-        const z = @divFloor(i, XChunks);
-        materials[i] = try resourceManager.createMaterial(try std.fmt.allocPrint(allocator, "Mat{}{}", .{ x, z }), material.shader, material.color, material.texture);
-    }
-
-    for (chunks.meshes, materials) |chunk, chunkMat| {
-        try model.addMeshMaterial(chunk, chunkMat);
+    for (chunks.meshes) |chunk| {
+        try model.addMeshMaterial(chunk, material);
     }
 
     return .{.model = model, .phMeshes = chunks.phMeshes};
@@ -115,9 +118,9 @@ pub fn chunkMesh2Model(resourceManager: *zune.graphics.ResourceManager, mesh: *P
 // ======================================
 
 /// Split mesh in N strips along cardinal 'dir' axis: This implies the axis orthogonal to `dir` axis remains intact
-fn chopChopMesh(allocator: Allocator, mesh: PlaceHolderMesh, N: usize, dir: Vec3) ![]PlaceHolderMesh {
+fn chopChopMesh(allocator: Allocator, mesh: PlaceHolderMesh, N: usize, dir: Vec3(f32)) ![]PlaceHolderMesh {
     // ===== Initialize variables =====
-    const axis: Vec3 = if (dir.x > dir.z) .{ .x = 1 } else .{ .z = 1 };
+    const axis: Vec3(f32) = if (dir.x > dir.z) .{ .x = 1 } else .{ .z = 1 };
     const meshes = try allocator.alloc(PlaceHolderMesh, N);
     meshes[0] = mesh;
     const worth = try allocator.alloc(usize, N);
@@ -155,7 +158,7 @@ fn chopChopMesh(allocator: Allocator, mesh: PlaceHolderMesh, N: usize, dir: Vec3
 
 /// Thin wrapper around `splitMesh` to split based on a ratio along `dir`. Cuts orthogonal to direction.
 /// Assumes `mesh.boundingBox` exists, and dir is axis-bound: either y=1 or z=1
-fn ratioSplitMesh(allocator: Allocator, mesh: PlaceHolderMesh, ratio: f32, dir: Vec3) ![2]PlaceHolderMesh {
+fn ratioSplitMesh(allocator: Allocator, mesh: PlaceHolderMesh, ratio: f32, dir: Vec3(f32)) ![2]PlaceHolderMesh {
     if (ratio < 0 or 1 <= ratio) return MeshError.InvalidDimensions;
 
     const meshSize = mesh.boundingBox.max.subtract(mesh.boundingBox.min);
@@ -169,11 +172,11 @@ fn ratioSplitMesh(allocator: Allocator, mesh: PlaceHolderMesh, ratio: f32, dir: 
 /// Split phMesh into 2 seperate placeholder meshes, cutting from `point` along `dir`
 /// left of `dir` is first mesh, right of `dir` is other.
 /// Deinitializes provided mesh
-pub fn splitMesh(allocator: Allocator, mesh: PlaceHolderMesh, point: Vec3, dir: Vec3) ![2]PlaceHolderMesh {
+pub fn splitMesh(allocator: Allocator, mesh: PlaceHolderMesh, point: Vec3(f32), dir: Vec3(f32)) ![2]PlaceHolderMesh {
     const TotVertexCount: u32 = mesh.vertexCount;
     const TotTriangleCount: u32 = mesh.triangleCount;
 
-    const orth_dir = (Vec3{ .y = 1 }).cross(dir);
+    const orth_dir = (Vec3(f32){ .y = 1 }).cross(dir);
 
     // Continue initializing vertices
     const vertice1 = try allocator.alloc(f32, TotVertexCount * 3);
@@ -199,22 +202,22 @@ pub fn splitMesh(allocator: Allocator, mesh: PlaceHolderMesh, point: Vec3, dir: 
     errdefer allocator.free(ids2);
 
     // Bounding box variable to keep track of
-    var BBmin1: Vec3 = Vec3{ .x = 999999.9, .y = 999999.9, .z = 999999.9 };
-    var BBmax1: Vec3 = Vec3{ .x = -999999.9, .y = -999999.9, .z = -999999.9 };
-    var BBmin2: Vec3 = Vec3{ .x = 999999.9, .y = 999999.9, .z = 999999.9 };
-    var BBmax2: Vec3 = Vec3{ .x = -999999.9, .y = -999999.9, .z = -999999.9 };
+    var BBmin1: Vec3(f32) = .{ .x = 999999.9, .y = 999999.9, .z = 999999.9 };
+    var BBmax1: Vec3(f32) = .{ .x = -999999.9, .y = -999999.9, .z = -999999.9 };
+    var BBmin2: Vec3(f32) = .{ .x = 999999.9, .y = 999999.9, .z = 999999.9 };
+    var BBmax2: Vec3(f32) = .{ .x = -999999.9, .y = -999999.9, .z = -999999.9 };
 
     // Split mesh in 2
     var i: u32 = 0;
     while (i < TotVertexCount) : (i += 1) {
-        const v_loc = Vec3{ .x = mesh.vertices[i * 3] - point.x, .y = mesh.vertices[i * 3 + 1] - point.y, .z = mesh.vertices[i * 3 + 2] - point.z };
+        const v_loc = Vec3(f32){ .x = mesh.vertices[i * 3] - point.x, .y = mesh.vertices[i * 3 + 1] - point.y, .z = mesh.vertices[i * 3 + 2] - point.z };
         if (v_loc.dot(orth_dir) > 0) { // > 0 = 1 side, <= 0 is other
             vertice1[p1 * 3] = mesh.vertices[i * 3];
             vertice1[p1 * 3 + 1] = mesh.vertices[i * 3 + 1];
             vertice1[p1 * 3 + 2] = mesh.vertices[i * 3 + 2];
 
-            BBmin1 = math.vec3Min(BBmin1, Vec3{ .x = vertice1[p1 * 3], .y = vertice1[p1 * 3 + 1], .z = vertice1[p1 * 3 + 2] });
-            BBmax1 = math.vec3Max(BBmax1, Vec3{ .x = vertice1[p1 * 3], .y = vertice1[p1 * 3 + 1], .z = vertice1[p1 * 3 + 2] });
+            BBmin1 = math.vec3Min(BBmin1, .{ .x = vertice1[p1 * 3], .y = vertice1[p1 * 3 + 1], .z = vertice1[p1 * 3 + 2] });
+            BBmax1 = math.vec3Max(BBmax1, .{ .x = vertice1[p1 * 3], .y = vertice1[p1 * 3 + 1], .z = vertice1[p1 * 3 + 2] });
 
             normal1[p1 * 3] = mesh.normals[i * 3];
             normal1[p1 * 3 + 1] = mesh.normals[i * 3 + 1];
@@ -231,8 +234,8 @@ pub fn splitMesh(allocator: Allocator, mesh: PlaceHolderMesh, point: Vec3, dir: 
             vertice2[p2 * 3 + 1] = mesh.vertices[i * 3 + 1];
             vertice2[p2 * 3 + 2] = mesh.vertices[i * 3 + 2];
 
-            BBmin2 = math.vec3Min(BBmin2, Vec3{ .x = vertice2[p2 * 3], .y = vertice2[p2 * 3 + 1], .z = vertice2[p2 * 3 + 2] });
-            BBmax2 = math.vec3Max(BBmax2, Vec3{ .x = vertice2[p2 * 3], .y = vertice2[p2 * 3 + 1], .z = vertice2[p2 * 3 + 2] });
+            BBmin2 = math.vec3Min(BBmin2, .{ .x = vertice2[p2 * 3], .y = vertice2[p2 * 3 + 1], .z = vertice2[p2 * 3 + 2] });
+            BBmax2 = math.vec3Max(BBmax2, .{ .x = vertice2[p2 * 3], .y = vertice2[p2 * 3 + 1], .z = vertice2[p2 * 3 + 2] });
 
             normal2[p2 * 3] = mesh.normals[i * 3];
             normal2[p2 * 3 + 1] = mesh.normals[i * 3 + 1];
@@ -351,8 +354,8 @@ pub fn splitMesh(allocator: Allocator, mesh: PlaceHolderMesh, point: Vec3, dir: 
                 vertice1[(chunk1Vertices + added_vertices1) * 3 + 2] = vertice2[indexOfOtherInVertex2 * 3 + 2];
 
                 // Check added vertice for boundingbox
-                BBmin1 = math.vec3Min(BBmin1, Vec3{ .x = vertice1[(chunk1Vertices + added_vertices1) * 3], .y = vertice1[(chunk1Vertices + added_vertices1) * 3 + 1], .z = vertice1[(chunk1Vertices + added_vertices1) * 3 + 2] });
-                BBmax1 = math.vec3Max(BBmax1, Vec3{ .x = vertice1[(chunk1Vertices + added_vertices1) * 3], .y = vertice1[(chunk1Vertices + added_vertices1) * 3 + 1], .z = vertice1[(chunk1Vertices + added_vertices1) * 3 + 2] });
+                BBmin1 = math.vec3Min(BBmin1, .{ .x = vertice1[(chunk1Vertices + added_vertices1) * 3], .y = vertice1[(chunk1Vertices + added_vertices1) * 3 + 1], .z = vertice1[(chunk1Vertices + added_vertices1) * 3 + 2] });
+                BBmax1 = math.vec3Max(BBmax1, .{ .x = vertice1[(chunk1Vertices + added_vertices1) * 3], .y = vertice1[(chunk1Vertices + added_vertices1) * 3 + 1], .z = vertice1[(chunk1Vertices + added_vertices1) * 3 + 2] });
 
                 // Create new normal for created vertex
                 normal1[(chunk1Vertices + added_vertices1) * 3] = normal2[indexOfOtherInVertex2 * 3];
@@ -378,8 +381,8 @@ pub fn splitMesh(allocator: Allocator, mesh: PlaceHolderMesh, point: Vec3, dir: 
                 vertice2[(chunk2Vertices + added_vertices2) * 3 + 2] = vertice1[indexOfOtherInVertex1 * 3 + 2];
 
                 // Check added vertice for boundingbox
-                BBmin2 = math.vec3Min(BBmin2, Vec3{ .x = vertice2[(chunk2Vertices + added_vertices2) * 3], .y = vertice2[(chunk2Vertices + added_vertices2) * 3 + 1], .z = vertice2[(chunk2Vertices + added_vertices2) * 3 + 2] });
-                BBmax2 = math.vec3Max(BBmax2, Vec3{ .x = vertice2[(chunk2Vertices + added_vertices2) * 3], .y = vertice2[(chunk2Vertices + added_vertices2) * 3 + 1], .z = vertice2[(chunk2Vertices + added_vertices2) * 3 + 2] });
+                BBmin2 = math.vec3Min(BBmin2, .{ .x = vertice2[(chunk2Vertices + added_vertices2) * 3], .y = vertice2[(chunk2Vertices + added_vertices2) * 3 + 1], .z = vertice2[(chunk2Vertices + added_vertices2) * 3 + 2] });
+                BBmax2 = math.vec3Max(BBmax2, .{ .x = vertice2[(chunk2Vertices + added_vertices2) * 3], .y = vertice2[(chunk2Vertices + added_vertices2) * 3 + 1], .z = vertice2[(chunk2Vertices + added_vertices2) * 3 + 2] });
 
                 // Create new normal for created vertex
                 normal2[(chunk2Vertices + added_vertices2) * 3] = normal1[indexOfOtherInVertex1 * 3];
@@ -497,19 +500,22 @@ pub const PlaceHolderMesh = struct {
 
         // Create the bounding box
         const box: BoundingBox = .{
-            .min = Vec3{ .x = minVertex[0], .y = minVertex[1], .z = minVertex[2] },
-            .max = Vec3{ .x = maxVertex[0], .y = maxVertex[1], .z = maxVertex[2] },
+            .min = .{ .x = minVertex[0], .y = minVertex[1], .z = minVertex[2] },
+            .max = .{ .x = maxVertex[0], .y = maxVertex[1], .z = maxVertex[2] },
         };
 
         return box;
     }
 
     /// Returns a zune.Mesh type, deinit self if `doDeinit` is `true`.
-    pub fn toMesh(self: PlaceHolderMesh, resourceManager: *zune.graphics.ResourceManager, meshName: []const u8, doDeinit: bool) !*zune.graphics.Mesh {
+    pub fn toMesh(self: PlaceHolderMesh, resourceManager: *zune.graphics.ResourceManager, meshName: OfMeshName, doDeinit: bool) !*zune.graphics.Mesh {
 
         // ----- Create rl.Mesh to upload and return -----
         const data = try self.interweave();
-        const result = try resourceManager.createMesh(meshName, data, self.indices, true);
+        const result = switch (meshName) {
+            .meshName => | name | try resourceManager.createMesh(name, data, self.indices, true),
+            .meshPrefix => | prefix | try resourceManager.autoCreateMesh(prefix, data, self.indices, true),
+        };
         if (doDeinit) self.deinit();
         self.allocator.free(data);
         return result;
@@ -542,4 +548,4 @@ pub const PlaceHolderMesh = struct {
 };
 
 /// Holds axis-aligned maximums of points
-pub const BoundingBox = struct { min: Vec3, max: Vec3 };
+pub const BoundingBox = struct { min: Vec3(f32), max: Vec3(f32) };

@@ -6,6 +6,7 @@ const math = @import("../math.zig");
 const PHMesh = @import("processing.zig").PlaceHolderMesh;
 
 const Allocator = std.mem.Allocator;
+const Vec3 = zmath.Vec3;
 
 const fileError = error{
     EndOfStream,
@@ -21,6 +22,7 @@ const fileError = error{
 const ParseFun = union(enum) { intParse: @TypeOf(std.fmt.parseInt), floatParse: @TypeOf(std.fmt.parseFloat) };
 
 const OfMesh = union(enum) { zMesh: *zune.graphics.Mesh, phMesh: PHMesh };
+pub const OfMeshName = union(enum) {meshName: []const u8, meshPrefix: []const u8}; 
 
 // ===== Thin wrappers for importObj function =====
 
@@ -266,7 +268,7 @@ fn assemblePHMesh(allocator: Allocator, indiceContext: IndiceContext, vertexCont
             // ----- Create constants -----
             const norms = try allocator.alloc(f32, n * 3);
             const vecs = vertices.items;
-            const faceNormals = try allocator.alloc(zmath.Vec3, triangleCount);
+            const faceNormals = try allocator.alloc(Vec3(f32), triangleCount);
             defer allocator.free(faceNormals);
 
             // ----- Find face normals -----
@@ -276,9 +278,9 @@ fn assemblePHMesh(allocator: Allocator, indiceContext: IndiceContext, vertexCont
                 const i_b: u32 = indices[i * 3 + 1];
                 const i_c: u32 = indices[i * 3 + 2];
 
-                const v1: zmath.Vec3 = zmath.Vec3{ .x = vecs[i_a * 3], .y = vecs[i_a * 3 + 1], .z = vecs[i_a * 3 + 2] };
-                const v2: zmath.Vec3 = zmath.Vec3{ .x = vecs[i_b * 3], .y = vecs[i_b * 3 + 1], .z = vecs[i_b * 3 + 2] };
-                const v3: zmath.Vec3 = zmath.Vec3{ .x = vecs[i_c * 3], .y = vecs[i_c * 3 + 1], .z = vecs[i_c * 3 + 2] };
+                const v1: Vec3(f32) = Vec3(f32){ .x = vecs[i_a * 3], .y = vecs[i_a * 3 + 1], .z = vecs[i_a * 3 + 2] };
+                const v2: Vec3(f32) = Vec3(f32){ .x = vecs[i_b * 3], .y = vecs[i_b * 3 + 1], .z = vecs[i_b * 3 + 2] };
+                const v3: Vec3(f32) = Vec3(f32){ .x = vecs[i_c * 3], .y = vecs[i_c * 3 + 1], .z = vecs[i_c * 3 + 2] };
 
                 faceNormals[i] = v2.subtract(v1).cross(v3.subtract(v1));
             }
@@ -390,7 +392,7 @@ fn assembleZMesh(allocator: Allocator, indiceContext: IndiceContext, vertexConte
     // ===== Create Normals if not present =====
     if (!hasNormals) {
         // ----- Find face normals -----
-        const faceNormals = try allocator.alloc(zmath.Vec3, triangleCount);
+        const faceNormals = try allocator.alloc(Vec3(f32), triangleCount);
         defer allocator.free(faceNormals);
 
         i = 0;
@@ -399,9 +401,9 @@ fn assembleZMesh(allocator: Allocator, indiceContext: IndiceContext, vertexConte
             const i_b: u32 = indices[i * 3 + 1];
             const i_c: u32 = indices[i * 3 + 2];
 
-            const v1: zmath.Vec3 = zmath.Vec3{ .x = Data[i_a * b], .y = Data[i_a * b + 1], .z = Data[i_a * b + 2] };
-            const v2: zmath.Vec3 = zmath.Vec3{ .x = Data[i_b * b], .y = Data[i_b * b + 1], .z = Data[i_b * b + 2] };
-            const v3: zmath.Vec3 = zmath.Vec3{ .x = Data[i_c * b], .y = Data[i_c * b + 1], .z = Data[i_c * b + 2] };
+            const v1: Vec3(f32) = Vec3(f32){ .x = Data[i_a * b], .y = Data[i_a * b + 1], .z = Data[i_a * b + 2] };
+            const v2: Vec3(f32) = Vec3(f32){ .x = Data[i_b * b], .y = Data[i_b * b + 1], .z = Data[i_b * b + 2] };
+            const v3: Vec3(f32) = Vec3(f32){ .x = Data[i_c * b], .y = Data[i_c * b + 1], .z = Data[i_c * b + 2] };
 
             faceNormals[i] = v2.subtract(v1).cross(v3.subtract(v1));
         }
@@ -510,8 +512,6 @@ pub fn storeLineInfo(allocator: Allocator, comptime T: type, bufferedReader: any
             bufStart += valueLen + 1; // Skip ' '
         }
         // Load last line
-        // std.debug.print("\\n: {any}\n", .{'\n'});
-        // if(@rem(debug, 1000) == 0) std.debug.print("value {}: {s}\n", .{debug, items[bufStart..lineLen]});
         if (bufStart != lineLen) try convertFun(T, items[bufStart..lineLen], parseFun, &valueBufWriter, subdivider);
 
         // ----- store values in buffer to array -----

@@ -34,8 +34,7 @@ pub const GameSetup = struct {
         errdefer ecs.release();
 
         // ----- Initialize input -----
-        var input = try zune.core.Input.create(allocator, window);
-        errdefer input.release();
+        const input = window.input.?;
 
         // ----- Initialize renderer -----
         var renderer = try zune.graphics.Renderer.create(allocator);
@@ -60,12 +59,5 @@ pub const GameSetup = struct {
         self.ecs.release();
         self.window.release();
         self.renderer.release();
-        self.input.release();
-        // self.allocator.destroy(self.memoryLeakprt);
-
-        // self.allocator.destroy(self);
-
-        // self.input.deinit();
-        // self.renderer.deinit();
     }
 };
