@@ -35,25 +35,20 @@ pub fn main() !void {
     const initial_mouse_pos = gameSetup.input.getMousePosition();
     var camera_controller = zune.graphics.CameraMouseController.init(&gameSetup.camera, @as(f32, @floatCast(initial_mouse_pos.x)), @as(f32, @floatCast(initial_mouse_pos.y)));
 
-    // ===== Create resources ===== //
-    // const texture = try resource_manager.createTexture("assets/textures/txtr.png");
-    // const shader = try resource_manager.createTextureShader();
-    // const material = try resource_manager.createMaterial("Dune", shader, .{ 1.0, 1.0, 1.0, 1.0 }, texture);
-
-    // const map = try Map.init(resource_manager, 
-    // "assets/models/Dune/lowresmodel.obj", 
-    // &gameSetup.camera, 
-    // material, .{.x = 100, .y = 25, .z = 100}, 
-    // .{.x = 11, .y = 11},
-    // "Dune");
-    // defer map.deinit();
-
     // ===== Register ECS-Components =====
     try ecsGeneralComponents(gameSetup.ecs);
     try ecsMap(gameSetup.ecs);
 
     // ===== Setup game =====
     try setActiveMap(gameSetup.ecs, 0, resource_manager, &gameSetup.camera);
+
+    const testMesh = try util.importPHMeshObj(resource_manager, "assets/models/GrassCube/Grass_Block.obj");
+    const FaceNormals = try mesh.simplifyMesh(allocator, testMesh);
+    defer allocator.free(FaceNormals);
+    for (0..@divExact(FaceNormals.len,3)) | i | std.debug.print("FaceNormal[{}]: ({d}, {d}, {d})\n", .{i, FaceNormals[i*3], FaceNormals[i*3+1], FaceNormals[i*3+2]});
+    defer testMesh.deinit();
+
+    std.debug.print("f128 alignment: {}\n", .{@alignOf(f128)});
 
     // ===== Main Loop ===== //
     while (!gameSetup.window.shouldClose()) {
@@ -81,7 +76,6 @@ const Velocity = struct {
     z: f32,
 };
 
-
 const ECSError = error{MapError};
 pub fn ecsGeneralComponents(ecs: *ECS) !void {
     try ecs.registerComponent(Model);
@@ -100,7 +94,7 @@ pub fn ecsMap(ecs: *ECS) !void {
         return ECSError.MapError;
     }
     
-    try ecs.registerComponent(Map);
+    try ecs.registerDeferedComponent(Map);
 }
 
 pub fn setActiveMap(ecs: *ECS, mapId: usize, resourceManager: *zune.graphics.ResourceManager, camera: *zune.graphics.Camera) !void {
@@ -120,6 +114,7 @@ pub fn setActiveMap(ecs: *ECS, mapId: usize, resourceManager: *zune.graphics.Res
     const mapMaterial = try resourceManager.createMaterial(mapName, mapShader, .{1, 1, 1, 0}, mapTexture);
 
     const entity = try ecs.createEntity();
+
     try ecs.addComponent(
         entity, 
         try Map.init(
@@ -136,7 +131,6 @@ pub fn setActiveMap(ecs: *ECS, mapId: usize, resourceManager: *zune.graphics.Res
             .local_matrix = zmath.Mat4.identity().data,
             .world_matrix = zmath.Mat4.identity().data,
             });
-
 }
 
 pub fn cameraControl(input: *zune.core.Input, camera: *zune.graphics.Camera) void {

@@ -21,6 +21,10 @@ const MeshError = error{
     Unexpected,
 };
 
+const avec3 = @Vector(3, f32);
+const avec4 = @Vector(4, f32);
+const ErrorMatrix = @Vector(10, f32); // row major generally (last 2 indices unused)
+
 // ======================================
 // Public functions
 // ======================================
@@ -116,6 +120,8 @@ pub fn chunkMesh2Model(resourceManager: *zune.graphics.ResourceManager, mesh: *P
 // ======================================
 // Private functions
 // ======================================
+
+
 
 /// Split mesh in N strips along cardinal 'dir' axis: This implies the axis orthogonal to `dir` axis remains intact
 fn chopChopMesh(allocator: Allocator, mesh: PlaceHolderMesh, N: usize, dir: Vec3(f32)) ![]PlaceHolderMesh {
@@ -461,6 +467,89 @@ pub fn splitMesh(allocator: Allocator, mesh: PlaceHolderMesh, point: Vec3(f32), 
     mesh.deinit();
 
     return meshes;
+}
+
+// ======================================
+// Mesh simplification functions
+// ======================================
+
+/// Return face
+pub fn getFaceNormals(allocator: Allocator, vertices: []avec4, indices: []u32) ![]avec4 {
+    const triangleCount = @divExact(indices.len, 3);
+    const faceNormals align(16) = try allocator.alloc(avec4, triangleCount);
+
+    var i:usize = 0;
+    while (i < triangleCount) : (i += 1) {
+        const i_a: u32 = indices[i * 3];
+        const i_b: u32 = indices[i * 3 + 1];
+        const i_c: u32 = indices[i * 3 + 2];
+
+        const V1 = vertices[i_a];
+        const V2 = vertices[i_b];
+        const V3 = vertices[i_c];
+
+        const edge1 = V2-V1;
+        const edge2 = V3-V1;
+        const tmp_0 = @shuffle(f32, edge1, edge1, avec4{1, 2, 0, 3});
+        const tmp_1 = @shuffle(f32, edge2, edge2, avec4{2, 0, 1, 3});
+        const tmp_2 = tmp_0*edge2;
+        const tmp_3 = @shuffle(f32, tmp_2, tmp_2, avec4{1, 2, 0, 3});
+        const tmp_4 = tmp_0*tmp_1;
+        const cross = tmp_4-tmp_3;
+
+        const zeros_vec: @Vector(4, f32) = .{0, 0, 0, 0};
+
+        faceNormals[i] = @shuffle(f32, math.vec3returnNormal(cross), zeros_vec, @Vector(4, i32){0, 1, 2, -1});
+    }
+    return faceNormals;
+}
+
+pub fn getErrorMatrices(allocator: Allocator, indices: []u32, vertices: []avec4, normals: []avec4) ![]ErrorMatrix {
+
+    const triangleCount = normals.len;
+
+    const errMatrices = try allocator.alloc(ErrorMatrix, triangleCount);
+
+    // ===== Determine errMatrices =====
+    var i: usize = 0;
+    while(i<triangleCount):(i+=1) {
+        const i_a = indices[i*3];
+        const d: @Vector(1, f32) = .{@reduce(.Add, vertices[i_a] * normals[i])};
+        const row = @shuffle(f32, normals[i], d, @Vector(4, i32){0, 1, 2, -1});
+        const firstRow: avec4 = row*@as(avec4, @splat(row[0]));
+        const secondRow: avec4 = row*@as(avec4, @splat(row[1]));
+        errMatrices[i] = @shuffle(f32, firstRow, secondRow, @Vector(10, i32){0, 1, 2, 3, -1, -2, -3, 0, 0, 0});
+        // TODO Parelize this? use shuffle on 2 sections and combine using shuffle? (would still be processed in chunks of 2/4) | Faster to store full 16?
+        errMatrices[i][7] = row[2]*row[2];
+        errMatrices[i][8] = row[2]*row[3];
+        errMatrices[i][9] = row[3]*row[3];
+    }
+    return errMatrices;
+}
+
+pub fn simplifyMesh(allocator: Allocator, mesh: PlaceHolderMesh) ![]avec4 {
+    
+    const vertexCount = mesh.vertexCount;
+    // const triangleCount = mesh.triangleCount;
+    const indices = mesh.indices;
+
+    // ===== Store values in vertices for better performance =====
+    const vertices align(16) = try allocator.alloc(@Vector(4, f32), vertexCount);
+    defer allocator.free(vertices);
+    const ones_vec = avec4{1, 1, 1, 1};
+    for (0..vertexCount-1) | i | vertices[i] = @shuffle(f32, @as(avec3, mesh.vertices[i*3..][0..3].*), ones_vec, @Vector(4, i32){0, 1, 2, -1});
+    
+    // ===== Determine face normals =====
+    const faceNormals = try getFaceNormals(allocator, vertices, indices);
+    // defer allocator.free(faceNormals);
+
+    // ===== Determine error matrices =====
+    const errMatrices = try getErrorMatrices(allocator, indices, vertices, faceNormals);
+    defer allocator.free(errMatrices);
+    std.debug.print("errMatrices[0]: {any}\n", .{errMatrices[0]});
+
+    return faceNormals;
+
 }
 
 // ======================================

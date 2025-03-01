@@ -17,6 +17,19 @@ pub fn vec3normalize(v: []f32) void {
     v[2] *= r_mag;
 }
 
+/// Return [3]f32 of magnitude 1
+pub fn vec3returnNormal(v: @Vector(4, f32)) @TypeOf(v) {
+    const mag2 = @reduce(.Add, v*v); // squared magnitude
+
+    if (mag2 == 0) {
+        return .{0, 0, 0, 0}; // If magnitude is 0 return same vector
+    }
+    const r_mag: @TypeOf(v) = @splat(1 / std.math.sqrt(mag2)); // reciprical of magnitude sqrt
+
+    return v*r_mag;
+}
+
+
 /// return minimum of 2 Vec3
 pub fn vec3Min(v1: anytype, v2: @TypeOf(v1)) @TypeOf(v1) {
     return .{

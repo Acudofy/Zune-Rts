@@ -23,7 +23,8 @@ pub const MAP_MESHES = [_][]const u8{
     "assets/models/Dune/lowresmodel.obj"
 };
 pub const MAP_TEXT = [_][]const u8{
-    "assets/models/Dune/colormap.png"
+    "assets/textures/txtr.png"
+    // "assets/models/Dune/colormap.png"
 };
 pub const MAP_CHUNKING = [_]Vec2(usize){
     .{.x = 11, .y = 11},
