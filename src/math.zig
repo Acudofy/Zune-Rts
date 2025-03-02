@@ -18,11 +18,11 @@ pub fn vec3normalize(v: []f32) void {
 }
 
 /// Return [3]f32 of magnitude 1
-pub fn vec3returnNormal(v: @Vector(4, f32)) @TypeOf(v) {
+pub fn vec3returnNormal(v: @Vector(3, f32)) @TypeOf(v) {
     const mag2 = @reduce(.Add, v*v); // squared magnitude
 
     if (mag2 == 0) {
-        return .{0, 0, 0, 0}; // If magnitude is 0 return same vector
+        return .{0, 0, 0}; // If magnitude is 0 return same vector
     }
     const r_mag: @TypeOf(v) = @splat(1 / std.math.sqrt(mag2)); // reciprical of magnitude sqrt
 

@@ -23,7 +23,7 @@ const MeshError = error{
 
 const avec3 = @Vector(3, f32);
 const avec4 = @Vector(4, f32);
-const ErrorMatrix = @Vector(10, f32); // row major generally (last 2 indices unused)
+const ErrorMatrix = [10]f32; // row major generally (last 2 indices unused)
 
 // ======================================
 // Public functions
@@ -474,9 +474,9 @@ pub fn splitMesh(allocator: Allocator, mesh: PlaceHolderMesh, point: Vec3(f32), 
 // ======================================
 
 /// Return face
-pub fn getFaceNormals(allocator: Allocator, vertices: []avec4, indices: []u32) ![]avec4 {
+fn getFaceNormals(allocator: Allocator, vertices: []f32, indices: []u32) ![]f32 {
     const triangleCount = @divExact(indices.len, 3);
-    const faceNormals align(16) = try allocator.alloc(avec4, triangleCount);
+    const faceNormals= try allocator.alloc(f32, triangleCount*3);
 
     var i:usize = 0;
     while (i < triangleCount) : (i += 1) {
@@ -484,29 +484,27 @@ pub fn getFaceNormals(allocator: Allocator, vertices: []avec4, indices: []u32) !
         const i_b: u32 = indices[i * 3 + 1];
         const i_c: u32 = indices[i * 3 + 2];
 
-        const V1 = vertices[i_a];
-        const V2 = vertices[i_b];
-        const V3 = vertices[i_c];
+        const V1: avec3 = vertices[i_a*3..][0..3].*;
+        const V2: avec3 = vertices[i_b*3..][0..3].*;
+        const V3: avec3 = vertices[i_c*3..][0..3].*;
 
         const edge1 = V2-V1;
         const edge2 = V3-V1;
-        const tmp_0 = @shuffle(f32, edge1, edge1, avec4{1, 2, 0, 3});
-        const tmp_1 = @shuffle(f32, edge2, edge2, avec4{2, 0, 1, 3});
+        const tmp_0 = @shuffle(f32, edge1, edge1, avec3{1, 2, 0});
+        const tmp_1 = @shuffle(f32, edge2, edge2, avec3{2, 0, 1});
         const tmp_2 = tmp_0*edge2;
-        const tmp_3 = @shuffle(f32, tmp_2, tmp_2, avec4{1, 2, 0, 3});
+        const tmp_3 = @shuffle(f32, tmp_2, tmp_2, avec3{1, 2, 0});
         const tmp_4 = tmp_0*tmp_1;
         const cross = tmp_4-tmp_3;
 
-        const zeros_vec: @Vector(4, f32) = .{0, 0, 0, 0};
-
-        faceNormals[i] = @shuffle(f32, math.vec3returnNormal(cross), zeros_vec, @Vector(4, i32){0, 1, 2, -1});
+        @memcpy(faceNormals[i*3..][0..3], @as([3]f32, math.vec3returnNormal(cross))[0..]);
     }
     return faceNormals;
 }
 
-pub fn getErrorMatrices(allocator: Allocator, indices: []u32, vertices: []avec4, normals: []avec4) ![]ErrorMatrix {
+fn getErrorMatrices(allocator: Allocator, indices: []u32, vertices: []f32, normals: []f32) ![]ErrorMatrix {
 
-    const triangleCount = normals.len;
+    const triangleCount = @divExact(normals.len, 3);
 
     const errMatrices = try allocator.alloc(ErrorMatrix, triangleCount);
 
@@ -514,31 +512,126 @@ pub fn getErrorMatrices(allocator: Allocator, indices: []u32, vertices: []avec4,
     var i: usize = 0;
     while(i<triangleCount):(i+=1) {
         const i_a = indices[i*3];
-        const d: @Vector(1, f32) = .{@reduce(.Add, vertices[i_a] * normals[i])};
-        const row = @shuffle(f32, normals[i], d, @Vector(4, i32){0, 1, 2, -1});
-        const firstRow: avec4 = row*@as(avec4, @splat(row[0]));
-        const secondRow: avec4 = row*@as(avec4, @splat(row[1]));
-        errMatrices[i] = @shuffle(f32, firstRow, secondRow, @Vector(10, i32){0, 1, 2, 3, -1, -2, -3, 0, 0, 0});
-        // TODO Parelize this? use shuffle on 2 sections and combine using shuffle? (would still be processed in chunks of 2/4) | Faster to store full 16?
-        errMatrices[i][7] = row[2]*row[2];
-        errMatrices[i][8] = row[2]*row[3];
-        errMatrices[i][9] = row[3]*row[3];
+        const a = normals[i*3];
+        const b = normals[i*3+1];
+        const c = normals[i*3+2];
+        const d = vertices[i_a*3] * a + vertices[i_a*3+1] * b + vertices[i_a*3+2] * c;
+        errMatrices[i] = .{a*a, a*b, a*c, a*d,
+                                b*b, b*c, b*d,
+                                     c*c, c*d,
+                                          d*d};
     }
     return errMatrices;
 }
 
-pub fn simplifyMesh(allocator: Allocator, mesh: PlaceHolderMesh) ![]avec4 {
+fn genHalfEdge(allocator: Allocator, indices: []u32, vertices: []f32) ![]HalfEdge{
+    const triangleCount = @divExact(indices.len, 3);
+
+    // ===== Create storage =====
+    var halfEdges = try allocator.alloc(HalfEdge, 3*triangleCount); // Needs more capacity for boundary twins //try std.ArrayList(HalfEdge).initCapacity(allocator, 3*triangleCount);
+    var border = try allocator.alloc(bool, 3*triangleCount);
+    var twinnedCount: u32 = 0;
+    for (0..border.len) | i | border[i] = true;
+    var links = std.AutoHashMap([2]u32, u32).init(allocator);
+    defer links.deinit();
+    try links.ensureTotalCapacity(4*@as(u32, @intCast(triangleCount))); // add 3*triangles actual capacity -> ensure more empty space
+
+    // ===== Go trough all triangles =====
+    var i:u32 = 0; // go trough triangles in mesh
+    while (i<triangleCount*3):(i+=3) {
+        std.debug.print("\n-----------\n", .{});
+
+        var j:u32 = 0; // count of edge in triangle
+        while (j<3):(j+=1) {
+            std.debug.print("indices[{}]: {}\n", .{i+j, indices[i+j]});
+            
+            const currInd = i + j; // Stores halfEdge index
+            const nextInd = i + @mod(j+1, 3);
+            const prevInd = i + @mod(j+3-1, 3);
+            
+            // ----- Fill in known information
+            halfEdges[currInd].origin = indices[currInd];
+            halfEdges[currInd].next = nextInd;
+            halfEdges[currInd].prev = prevInd;
+
+            // ----- Store links -----
+            const vCurr = indices[currInd];
+            const vNext = indices[nextInd];
+            // const vPrev = indices[prevInd];
+            std.debug.print("({}, {}, {})\n", .{vertices[vCurr*3], vertices[vCurr*3+1], vertices[vCurr*3+2]});
+            const linkNext: [2]u32 = if(vCurr < vNext) .{vCurr, vNext} else .{vNext, vCurr}; // Ensure small to large ordering
+            // const linkPrev: [2]u32 = if(vPrev < vNext) .{vPrev, vCurr} else .{vCurr, vPrev};
+
+            if(links.fetchPutAssumeCapacity(linkNext, currInd)) | twin | {
+                // ----- Fill in twin fields for both -----
+                const twinInd = twin.value; 
+                halfEdges[currInd].twin = twinInd;
+                halfEdges[twinInd].twin = currInd;
+
+                border[currInd] = false;
+                border[twinInd] = false;
+
+                twinnedCount += 2;
+            }
+        }
+    }
+    // ===== Create border twins =====
+    const HE_start: u32 = @intCast(halfEdges.len);
+    const halfEdges_ext: []HalfEdge = try allocator.realloc(halfEdges, HE_start + (HE_start-twinnedCount));
     
-    const vertexCount = mesh.vertexCount;
+    var j: u32 = 0;
+    for(border, 0..) | b, n | {
+        if(!b) continue;
+        const pos:u32 = @intCast(n);
+        // ----- next HalfEdge element in original -----
+        const nextHE: HalfEdge = halfEdges_ext[halfEdges_ext[pos].next];
+
+        // ----- determine if next element of border exists -----
+        const symetryEdge: HalfEdge = halfEdges_ext[halfEdges_ext[pos].prev];
+        const flipped_symetryEdge: HalfEdge = halfEdges_ext[symetryEdge.twin];
+        const nextBorderTwin_pos = flipped_symetryEdge.prev;
+
+        // ----- create halfEdge -----
+        const i_new = HE_start+j;  
+        if(border[nextBorderTwin_pos]) { // if next border is not yet made
+            halfEdges_ext[i_new] = HalfEdge{
+                .origin = nextHE.origin,
+                .twin = pos,
+                .next = i_new+1,
+                .prev = if(i > 0) i_new - 1 else undefined,
+            };
+        } else {
+            const i_next_border = halfEdges_ext[nextBorderTwin_pos].twin;
+            halfEdges_ext[i_new] = HalfEdge{
+                .origin = nextHE.origin,
+                .twin = pos,
+                .next = i_next_border,
+                .prev = i_new - 1,
+            };
+            halfEdges_ext[i_next_border].prev = i_new;
+        }
+        halfEdges_ext[pos].twin = i_new;
+        border[pos] = false;
+
+        j+=1;
+    }
+
+
+    // ===== TODO: Add face index =====
+
+    // ===== Return halfEdge data struct =====
+    return halfEdges_ext;
+}
+
+pub fn simplifyMesh(allocator: Allocator, mesh: PlaceHolderMesh) ![]f32 {
+    
+    // const vertexCount = mesh.vertexCount;
     // const triangleCount = mesh.triangleCount;
     const indices = mesh.indices;
 
     // ===== Store values in vertices for better performance =====
-    const vertices align(16) = try allocator.alloc(@Vector(4, f32), vertexCount);
-    defer allocator.free(vertices);
-    const ones_vec = avec4{1, 1, 1, 1};
-    for (0..vertexCount-1) | i | vertices[i] = @shuffle(f32, @as(avec3, mesh.vertices[i*3..][0..3].*), ones_vec, @Vector(4, i32){0, 1, 2, -1});
-    
+    const vertices = mesh.vertices;
+
     // ===== Determine face normals =====
     const faceNormals = try getFaceNormals(allocator, vertices, indices);
     // defer allocator.free(faceNormals);
@@ -546,28 +639,24 @@ pub fn simplifyMesh(allocator: Allocator, mesh: PlaceHolderMesh) ![]avec4 {
     // ===== Determine error matrices =====
     const errMatrices = try getErrorMatrices(allocator, indices, vertices, faceNormals);
     defer allocator.free(errMatrices);
-    std.debug.print("errMatrices[0]: {any}\n", .{errMatrices[0]});
 
-    // Check if fully manual performance
-
-    var timer = try std.time.Timer.start();
-    // var times: [10]u64 = undefined;
-    var errs: [10000]f32 = undefined;
-    var i:usize = 0;
-    while (i<errs.len):(i+=1) {
-        const v = vertices[0];
-        const col1: avec4 = @shuffle(f32, errMatrices[0], errMatrices[0], @Vector(4, i32){0, 1, 2, 3});
-        const col2: avec4 = @shuffle(f32, errMatrices[0], errMatrices[0], @Vector(4, i32){1, 4, 5, 6});
-        const col3: avec4 = @shuffle(f32, errMatrices[0], errMatrices[0], @Vector(4, i32){2, 5, 7, 8});
-        const col4: avec4 = @shuffle(f32, errMatrices[0], errMatrices[0], @Vector(4, i32){3, 6, 8, 9});
-        errs[i] = @reduce(.Add, (col1*v + col2*v + col3*v + col4*v)*v);
-    }
-    const time = timer.lap();
-    std.debug.print("time: {}\n", .{time});
-    std.debug.print("err: {d}\n", .{errs[999]});
-
+    // ===== Create halfEdge mesh =====
+    const halfEdges = try genHalfEdge(allocator, indices, vertices);
+    defer allocator.free(halfEdges);
+    for (halfEdges, 0..) | he, i | std.debug.print("halfEdges[{}]: {any}\n", .{i, he});
+    const v = vertices[0..][0..3];
+    const errorExmpl = errTerm(v.*, errMatrices[0]);
+    std.debug.print("errorExample: {d}\n", .{errorExmpl});
     return faceNormals;
 
+}
+
+inline fn errTerm(v: [3]f32, M: ErrorMatrix) f32 {
+    const v1 = v[0];
+    const v2 = v[1];
+    const v3 = v[2];
+    
+    return (v1*M[0] + v2*M[1] + v3*M[2] + M[3])*v1 + (v1*M[1] + v2*M[4] + v3*M[5] + M[6])*v2 + (v1*M[2] + v2*M[5] + v3*M[7] + M[8])*v3 + v1*M[3] + v2*M[6] + v3*M[8] + M[9];
 }
 
 // ======================================
@@ -656,3 +745,10 @@ pub const PlaceHolderMesh = struct {
 
 /// Holds axis-aligned maximums of points
 pub const BoundingBox = struct { min: Vec3(f32), max: Vec3(f32) };
+
+const HalfEdge = struct {
+    origin: u32,
+    twin: u32,
+    next: u32,
+    prev: u32,
+}; 

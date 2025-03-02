@@ -7,7 +7,7 @@ pub fn build(b: *std.Build) void {
         .os_tag = .windows,
         .abi = .gnu,
     } });
-    const optimize = b.standardOptimizeOption(.{});
+    const optimize = b.standardOptimizeOption(.{.preferred_optimize_mode = .Debug});
 
     // Create the zune module that will be shared across all examples
     const libzune = b.addModule("zune", .{

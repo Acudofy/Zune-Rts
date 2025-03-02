@@ -42,7 +42,8 @@ pub fn main() !void {
     // ===== Setup game =====
     try setActiveMap(gameSetup.ecs, 0, resource_manager, &gameSetup.camera);
 
-    const testMesh = try util.importPHMeshObj(resource_manager, "assets/models/GrassCube/Grass_Block.obj");
+    // const testMesh = try util.importPHMeshObj(resource_manager, "assets/models/GrassCube/Grass_Block.obj");
+    const testMesh = try util.importPHMeshObj(resource_manager, "assets/models/Test/test.obj");
     const FaceNormals = try mesh.simplifyMesh(allocator, testMesh);
     defer allocator.free(FaceNormals);
     for (0..@divExact(FaceNormals.len,3)) | i | std.debug.print("FaceNormal[{}]: ({d}, {d}, {d})\n", .{i, FaceNormals[i*3], FaceNormals[i*3+1], FaceNormals[i*3+2]});
