@@ -85,7 +85,7 @@ pub const Map = struct {
         return result;
     }
 
-    pub fn deinit(self: Map) void {
+    pub fn deinit(self: *Map) void {
         self.allocator.free(self.positions);
         self.allocator.free(self.boundingBoxes);
         self.allocator.free(self.inView);

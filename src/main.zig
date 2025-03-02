@@ -25,7 +25,7 @@ pub fn main() !void {
 
     // ----- Initialize resource manager ----- //
     var resource_manager = try zune.graphics.ResourceManager.create(allocator);
-    defer _ = resource_manager.releaseAll();
+    defer _ = resource_manager.releaseAll() catch std.debug.print("all your errors are belong to us\n", .{});
 
     // ----- Initialize game ----- //
     var gameSetup = try GameSetup.init(allocator);
@@ -94,7 +94,7 @@ pub fn ecsMap(ecs: *ECS) !void {
         return ECSError.MapError;
     }
     
-    try ecs.registerDeferedComponent(Map);
+    try ecs.registerDeferedComponent(Map, "deinit");
 }
 
 pub fn setActiveMap(ecs: *ECS, mapId: usize, resourceManager: *zune.graphics.ResourceManager, camera: *zune.graphics.Camera) !void {
@@ -110,7 +110,7 @@ pub fn setActiveMap(ecs: *ECS, mapId: usize, resourceManager: *zune.graphics.Res
     const mapChunking = MN.MAP_CHUNKING[mapId];
 
     const mapTexture = try resourceManager.createTexture(mapTextureLoc);
-    const mapShader = try resourceManager.createTextureShader();
+    const mapShader = try resourceManager.createTextureShader("dsaiujyh8uiaqewh");
     const mapMaterial = try resourceManager.createMaterial(mapName, mapShader, .{1, 1, 1, 0}, mapTexture);
 
     const entity = try ecs.createEntity();

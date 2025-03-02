@@ -548,6 +548,24 @@ pub fn simplifyMesh(allocator: Allocator, mesh: PlaceHolderMesh) ![]avec4 {
     defer allocator.free(errMatrices);
     std.debug.print("errMatrices[0]: {any}\n", .{errMatrices[0]});
 
+    // Check if fully manual performance
+
+    var timer = try std.time.Timer.start();
+    // var times: [10]u64 = undefined;
+    var errs: [10000]f32 = undefined;
+    var i:usize = 0;
+    while (i<errs.len):(i+=1) {
+        const v = vertices[0];
+        const col1: avec4 = @shuffle(f32, errMatrices[0], errMatrices[0], @Vector(4, i32){0, 1, 2, 3});
+        const col2: avec4 = @shuffle(f32, errMatrices[0], errMatrices[0], @Vector(4, i32){1, 4, 5, 6});
+        const col3: avec4 = @shuffle(f32, errMatrices[0], errMatrices[0], @Vector(4, i32){2, 5, 7, 8});
+        const col4: avec4 = @shuffle(f32, errMatrices[0], errMatrices[0], @Vector(4, i32){3, 6, 8, 9});
+        errs[i] = @reduce(.Add, (col1*v + col2*v + col3*v + col4*v)*v);
+    }
+    const time = timer.lap();
+    std.debug.print("time: {}\n", .{time});
+    std.debug.print("err: {d}\n", .{errs[999]});
+
     return faceNormals;
 
 }

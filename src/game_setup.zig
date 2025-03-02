@@ -37,7 +37,7 @@ pub const GameSetup = struct {
         const input = window.input.?;
 
         // ----- Initialize renderer -----
-        var renderer = try zune.graphics.Renderer.create(allocator);
+        var renderer = try zune.graphics.Renderer.create(allocator, .{.polygon_mode = .line});
         errdefer renderer.release();
 
         // ----- Initialize camera -----
