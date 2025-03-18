@@ -9,11 +9,13 @@ const MN = @import("globals.zig");
 
 const Map = @import("world/map.zig").Map;
 const GameSetup = @import("game_setup.zig").GameSetup;
+const PlaceHolderMesh = mesh.PlaceHolderMesh;
 
 const Allocator = std.mem.Allocator;
 const ECS = zune.ecs.Registry;
 const Model = zune.ecs.components.ModelComponent;
 const Transform = zune.ecs.components.TransformComponent;
+const Mesh = zune.graphics.Mesh;
 
 pub fn main() !void {
     std.debug.print("Started program...\n", .{});
@@ -24,7 +26,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
 
     // ----- Initialize resource manager ----- //
-    var resource_manager = try zune.graphics.ResourceManager.create(allocator);
+    var resource_manager = try zune.graphics.ResourceManager.create(allocator, .{ .enabled = false });
     defer _ = resource_manager.releaseAll() catch std.debug.print("all your errors are belong to us\n", .{});
 
     // ----- Initialize game ----- //
@@ -42,14 +44,39 @@ pub fn main() !void {
     // ===== Setup game =====
     try setActiveMap(gameSetup.ecs, 0, resource_manager, &gameSetup.camera);
 
-    // const testMesh = try util.importPHMeshObj(resource_manager, "assets/models/GrassCube/Grass_Block.obj");
-    const testMesh = try util.importPHMeshObj(resource_manager, "assets/models/Test/test.obj");
-    const FaceNormals = try mesh.simplifyMesh(allocator, testMesh);
-    defer allocator.free(FaceNormals);
-    for (0..@divExact(FaceNormals.len,3)) | i | std.debug.print("FaceNormal[{}]: ({d}, {d}, {d})\n", .{i, FaceNormals[i*3], FaceNormals[i*3+1], FaceNormals[i*3+2]});
+    // =====================
+    // ===== TEST CODE =====
+    // =====================
+    var testMesh = try util.importPHMeshObj(resource_manager, "assets/models/Teapot/Teapot.obj");
     defer testMesh.deinit();
+    var collapse_err:f32 = 0;
 
-    std.debug.print("f128 alignment: {}\n", .{@alignOf(f128)});
+    // try mesh.collapseMesh(&testMesh);
+
+    std.debug.print("triangleCount: {}\n", .{testMesh.triangleCount});
+    std.debug.print("indices.len: {}\n", .{testMesh.indices.len});
+    std.debug.print("maxVertex: {}\n", .{std.mem.max(u32, testMesh.indices)});
+    std.debug.print("vertexCount: {}\n", .{testMesh.vertexCount});
+    std.debug.print("vertices.len: {}\n", .{testMesh.vertices.len});
+    
+
+    mesh.scaleMesh(testMesh, .{.x = 10, .y = 10, .z = 10});
+    // mesh.moveMesh(testMesh, .{.x = 300, .y = 300, .z = 300});
+
+    const tmesh = try resource_manager.createMesh("Test", testMesh.vertices, testMesh.indices, 3);
+    const model = try resource_manager.createModel("Test");
+    const material = try resource_manager.createMaterial("Test", try resource_manager.createColorShader("Test"), .{ 1, 0, 1, 1 }, null);
+    try model.addMeshMaterial(tmesh, material);
+    const ent = try gameSetup.ecs.createEntity();
+    try gameSetup.ecs.addComponent(ent, Model{ .model = model, .visible = true });
+    try gameSetup.ecs.addComponent(ent, Transform.identity());
+
+    // defer allocator.free(FaceNormals);
+    // for (0..@divExact(FaceNormals.len, 3)) |i| std.debug.print("FaceNormal[{}]: ({d}, {d}, {d})\n", .{ i, FaceNormals[i * 3], FaceNormals[i * 3 + 1], FaceNormals[i * 3 + 2] });
+
+    // =====================
+    // === END TEST CODE ===
+    // =====================
 
     // ===== Main Loop ===== //
     while (!gameSetup.window.shouldClose()) {
@@ -61,9 +88,12 @@ pub fn main() !void {
 
         if (gameSetup.input.isKeyReleased(.KEY_ESCAPE)) break;
 
+        // ==== Experimental ====
+        try testController(gameSetup.input, tmesh, &testMesh, &collapse_err);
+
         // ==== Render game ====
         gameSetup.renderer.clear();
-        try renderSystem(gameSetup.ecs, gameSetup.camera);
+        try renderSystem(gameSetup.ecs, &gameSetup.camera);
 
         // ==== Frame logistics ====
         try gameSetup.window.pollEvents();
@@ -94,7 +124,7 @@ pub fn ecsMap(ecs: *ECS) !void {
         std.debug.print("Unequal map parameter-counts\n", .{});
         return ECSError.MapError;
     }
-    
+
     try ecs.registerDeferedComponent(Map, "deinit");
 }
 
@@ -112,34 +142,24 @@ pub fn setActiveMap(ecs: *ECS, mapId: usize, resourceManager: *zune.graphics.Res
 
     const mapTexture = try resourceManager.createTexture(mapTextureLoc);
     const mapShader = try resourceManager.createTextureShader("dsaiujyh8uiaqewh");
-    const mapMaterial = try resourceManager.createMaterial(mapName, mapShader, .{1, 1, 1, 0}, mapTexture);
+    const mapMaterial = try resourceManager.createMaterial(mapName, mapShader, .{ 1, 1, 1, 0 }, mapTexture);
 
     const entity = try ecs.createEntity();
 
-    try ecs.addComponent(
-        entity, 
-        try Map.init(
-            resourceManager, 
-            mapMeshLoc,
-            camera, 
-            mapMaterial, 
-            mapSize, 
-            mapChunking, 
-            mapName));
-    try ecs.addComponent(
-        entity,
-        Transform{
-            .local_matrix = zmath.Mat4.identity().data,
-            .world_matrix = zmath.Mat4.identity().data,
-            });
+    try ecs.addComponent(entity, try Map.init(resourceManager, mapMeshLoc, camera, mapMaterial, mapSize, mapChunking, mapName));
+    const id = zmath.Mat4f{.data = math.mat4Identity};
+    try ecs.addComponent(entity, Transform{
+        .local_matrix = id,
+        .world_matrix = id,
+    });
 }
 
 pub fn cameraControl(input: *zune.core.Input, camera: *zune.graphics.Camera) void {
     var forward = camera.getForwardVector();
     forward.y = 0;
     forward = forward.normalize();
-    const side = forward.cross(.{ .y = 1 });
-    
+    const side = forward.cross(.{ .x = 0, .y = 1, .z = 0});
+
     const v: f32 = if (input.isKeyHeld(.KEY_LEFT_CONTROL)) 5.0 else 0.5;
 
     // Update position
@@ -160,25 +180,38 @@ pub fn cameraControl(input: *zune.core.Input, camera: *zune.graphics.Camera) voi
     }
 
     if (input.isKeyHeld(.KEY_SPACE)) {
-        camera.setPosition(camera.position.add(.{.y = v}));
+        camera.setPosition(camera.position.add(.{.x = 0, .y = v, .z=0 }));
     }
 
     if (input.isKeyHeld(.KEY_LEFT_SHIFT)) {
-        camera.setPosition(camera.position.add(.{.y = -v}));
+        camera.setPosition(camera.position.add(.{.x = 0, .y = -v, .z = 0  }));
     }
 }
 
-pub fn renderSystem(ecs: *ECS, camera: zune.graphics.Camera) !void {
+pub fn testController(input: *zune.core.Input, m: *Mesh, phMesh: *PlaceHolderMesh, err: *f32) !void {
+    var changed = false;
+    if(input.isKeyReleased(.KEY_EQUAL)){
+        err.* += 5;
+        changed = true;
+    }
+
+    if(changed){
+        try mesh.collapseMesh(phMesh, err.*);
+        try m.updateMesh(phMesh.vertices, phMesh.indices, 3);
+    }
+}
+
+pub fn renderSystem(ecs: *ECS, camera: *zune.graphics.Camera) !void {
     try renderEntities(ecs, camera);
     try renderMaps(ecs, camera);
 }
 
 /// render all `model` components with a `transform` component
-fn renderEntities(ecs: *ECS, camera: zune.graphics.Camera) !void {
+fn renderEntities(ecs: *ECS, camera: *zune.graphics.Camera) !void {
     // Query for entities with all required components
     var query = try ecs.query(struct {
         transform: *Transform,
-        model: *zune.ecs.components.ModelComponent,
+        model: *Model,
     });
 
     while (try query.next()) |components| {
@@ -197,13 +230,13 @@ fn renderEntities(ecs: *ECS, camera: zune.graphics.Camera) !void {
 }
 
 /// render all `map` components with a `transform` component
-fn renderMaps(ecs: *ECS, camera: zune.graphics.Camera) !void {
+fn renderMaps(ecs: *ECS, camera: *zune.graphics.Camera) !void {
     var query = try ecs.query(struct {
         transform: *Transform,
         map: *Map,
     });
 
-    while(try query.next()) | map | {
+    while (try query.next()) |map| {
         try camera.drawModel(
             map.map.model,
             &map.transform.world_matrix,
@@ -225,24 +258,24 @@ pub fn genCube(resourceManager: *zune.graphics.ResourceManager, camera: zune.gra
     return cube_model;
 }
 
-pub fn world2screen(camera: *zune.graphics.Camera, point: zmath.Vec3(f32)) zmath.Vec2(f32) {
+pub fn world2screen(camera: *zune.graphics.Camera, point: math.vec3(f32)) math.vec2(f32) {
     const M = camera.getViewProjectionMatrix().data;
     const v = point;
 
-    const x = M[0]*v.x + M[4]*v.y + M[8]*v.z + M[12];
-    const y = M[1]*v.x + M[5]*v.y + M[9]*v.z + M[13];
+    const x = M[0] * v.x + M[4] * v.y + M[8] * v.z + M[12];
+    const y = M[1] * v.x + M[5] * v.y + M[9] * v.z + M[13];
     // const z = M[2]*v.x + M[6]*v.y + M[10]*v.z + M[14];
-    const w = M[3]*v.x + M[7]*v.y + M[11]*v.z + M[15];
+    const w = M[3] * v.x + M[7] * v.y + M[11] * v.z + M[15];
 
     if (w == 0) return .{};
 
     return .{
-        .x = x/w,
-        .y = y/w,
+        .x = x / w,
+        .y = y / w,
     };
 }
 
-pub fn inview(camera: *zune.graphics.Camera, point: zmath.Vec3(f32)) bool {
+pub fn inview(camera: *zune.graphics.Camera, point: math.vec3(f32)) bool {
     const pos = world2screen(camera, point);
     return (@abs(pos.x) <= 1 and @abs(pos.y) < 1);
-} 
+}

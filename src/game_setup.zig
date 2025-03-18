@@ -37,13 +37,13 @@ pub const GameSetup = struct {
         const input = window.input.?;
 
         // ----- Initialize renderer -----
-        var renderer = try zune.graphics.Renderer.create(allocator, .{.polygon_mode = .line});
+        var renderer = try zune.graphics.Renderer.create(allocator, .{ .polygon_mode = .line });
         errdefer renderer.release();
 
         // ----- Initialize camera -----
         var camera = zune.graphics.Camera.initPerspective(renderer, MN.CAMERA_FOV, MN.CAMERA_ASPECT, MN.CAMERA_NEAR, MN.CAMERA_FAR);
-        camera.setPosition(.{ .x = 0, .y = 400.0, .z = 0 });
-        camera.lookAt(.{ .x = 4000, .z = 4000 });
+        camera.setPosition(.{ .x = 0, .y = 0.0, .z = 0 });
+        camera.lookAt(.{ .x = 4000, .z = 4000 , .y = 0});
 
         return GameSetup{
             .allocator = allocator,

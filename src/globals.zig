@@ -1,8 +1,9 @@
 const std = @import("std");
 const zune = @import("zune");
+const math = @import("math.zig");
 
-const Vec2 = zune.math.Vec2;
-const Vec3 = zune.math.Vec3;
+const Vec2 = math.vec2;
+const Vec3 = math.vec3;
 
 // Window config
 pub const WINDOW_WIDTH = 1280;

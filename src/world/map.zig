@@ -1,13 +1,14 @@
 const std = @import("std");
 const zune = @import("zune");
+const math = @import("../math.zig");
 
 const fImport = @import("../mesh/import_files.zig");
 const mProc = @import("../mesh/processing.zig");
 
 const inView = @import("../main.zig").inview;
 
-const Vec2 = zune.math.Vec2;
-const Vec3 = zune.math.Vec3;
+const Vec2 = math.vec2;
+const Vec3 = math.vec3;
 const Allocator = std.mem.Allocator;
 const BoundingBox = mProc.BoundingBox;
 
