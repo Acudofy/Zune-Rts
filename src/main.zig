@@ -2,14 +2,15 @@ const std = @import("std");
 const zune = @import("zune");
 const zmath = zune.math;
 const util = @import("mesh/import_files.zig");
-const mesh = @import("mesh/processing.zig");
+const mesh_processing = @import("mesh/processing.zig");
+const mesh_simplification = @import("mesh/cuthulus_box.zig");
 const math = @import("math.zig");
 
 const MN = @import("globals.zig");
 
 const Map = @import("world/map.zig").Map;
 const GameSetup = @import("game_setup.zig").GameSetup;
-const PlaceHolderMesh = mesh.PlaceHolderMesh;
+const PlaceHolderMesh = mesh_processing.PlaceHolderMesh;
 
 const Allocator = std.mem.Allocator;
 const ECS = zune.ecs.Registry;
@@ -49,9 +50,9 @@ pub fn main() !void {
     // =====================
     var testMesh = try util.importPHMeshObj(resource_manager, "assets/models/Teapot/Teapot.obj");
     defer testMesh.deinit();
-    var collapse_err:f32 = 0;
-
-    // try mesh.collapseMesh(&testMesh);
+    const meshBB = testMesh.getBoundingBox();
+    const meshSize = meshBB.max.subtract(meshBB.min);
+    var collapse_err:f32 = @max(meshSize.x, meshSize.y, meshSize.z)/1000;
 
     std.debug.print("triangleCount: {}\n", .{testMesh.triangleCount});
     std.debug.print("indices.len: {}\n", .{testMesh.indices.len});
@@ -60,7 +61,7 @@ pub fn main() !void {
     std.debug.print("vertices.len: {}\n", .{testMesh.vertices.len});
     
 
-    mesh.scaleMesh(testMesh, .{.x = 10, .y = 10, .z = 10});
+    mesh_processing.scaleMesh(testMesh, .{.x = 10, .y = 10, .z = 10});
     // mesh.moveMesh(testMesh, .{.x = 300, .y = 300, .z = 300});
 
     const tmesh = try resource_manager.createMesh("Test", testMesh.vertices, testMesh.indices, 3);
@@ -70,9 +71,6 @@ pub fn main() !void {
     const ent = try gameSetup.ecs.createEntity();
     try gameSetup.ecs.addComponent(ent, Model{ .model = model, .visible = true });
     try gameSetup.ecs.addComponent(ent, Transform.identity());
-
-    // defer allocator.free(FaceNormals);
-    // for (0..@divExact(FaceNormals.len, 3)) |i| std.debug.print("FaceNormal[{}]: ({d}, {d}, {d})\n", .{ i, FaceNormals[i * 3], FaceNormals[i * 3 + 1], FaceNormals[i * 3 + 2] });
 
     // =====================
     // === END TEST CODE ===
@@ -191,12 +189,12 @@ pub fn cameraControl(input: *zune.core.Input, camera: *zune.graphics.Camera) voi
 pub fn testController(input: *zune.core.Input, m: *Mesh, phMesh: *PlaceHolderMesh, err: *f32) !void {
     var changed = false;
     if(input.isKeyReleased(.KEY_EQUAL)){
-        err.* += 5;
+        err.* *= 1.2;
         changed = true;
     }
 
     if(changed){
-        try mesh.collapseMesh(phMesh, err.*);
+        try mesh_simplification.collapseMesh(phMesh, err.*);
         try m.updateMesh(phMesh.vertices, phMesh.indices, 3);
     }
 }
@@ -250,8 +248,8 @@ pub fn genCube(resourceManager: *zune.graphics.ResourceManager, camera: zune.gra
     const material = try resourceManager.createMaterial("cubemat", shader, .{ 1.0, 1.0, 1.0, 1.0 }, texture);
 
     const ph_cube_mesh = try util.importPHMeshObj(resourceManager, "assets/models/GrassCube/Grass_Block.obj");
-    mesh.scaleMesh(ph_cube_mesh, .{ .x = 1, .y = 1, .z = 1 });
-    mesh.moveMesh(ph_cube_mesh, camera.position.subtract(ph_cube_mesh.getBoundingBox().min));
+    mesh_processing.scaleMesh(ph_cube_mesh, .{ .x = 1, .y = 1, .z = 1 });
+    mesh_processing.moveMesh(ph_cube_mesh, camera.position.subtract(ph_cube_mesh.getBoundingBox().min));
     const cube_mesh = try ph_cube_mesh.toMesh(resourceManager, "dssda", true);
     const cube_model = try resourceManager.createModel("das");
     try cube_model.addMeshMaterial(cube_mesh, material);
