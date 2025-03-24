@@ -1,10 +1,11 @@
 const std = @import("std");
 const zune = @import("zune");
 const zmath = zune.math;
-const util = @import("mesh/import_files.zig");
+const mesh_import = @import("mesh/import_files.zig");
 const mesh_processing = @import("mesh/processing.zig");
 const mesh_simplification = @import("mesh/cuthulus_box.zig");
 const math = @import("math.zig");
+const util_print = @import("utils/prints.zig");
 
 const MN = @import("globals.zig");
 
@@ -48,11 +49,11 @@ pub fn main() !void {
     // =====================
     // ===== TEST CODE =====
     // =====================
-    var testMesh = try util.importPHMeshObj(resource_manager, "assets/models/Teapot/Teapot.obj");
+    var testMesh = try mesh_import.importPHMeshObj(resource_manager, "assets/models/Teapot/Teapot.obj");
     defer testMesh.deinit();
     const meshBB = testMesh.getBoundingBox();
     const meshSize = meshBB.max.subtract(meshBB.min);
-    var collapse_err:f32 = @max(meshSize.x, meshSize.y, meshSize.z)/1000;
+    var collapse_err:f32 = @max(meshSize.x, meshSize.y, meshSize.z)/100;
 
     std.debug.print("triangleCount: {}\n", .{testMesh.triangleCount});
     std.debug.print("indices.len: {}\n", .{testMesh.indices.len});
@@ -61,7 +62,7 @@ pub fn main() !void {
     std.debug.print("vertices.len: {}\n", .{testMesh.vertices.len});
     
 
-    mesh_processing.scaleMesh(testMesh, .{.x = 10, .y = 10, .z = 10});
+    // mesh_processing.scaleMesh(testMesh, .{.x = 10, .y = 10, .z = 10});
     // mesh.moveMesh(testMesh, .{.x = 300, .y = 300, .z = 300});
 
     const tmesh = try resource_manager.createMesh("Test", testMesh.vertices, testMesh.indices, 3);
@@ -191,11 +192,20 @@ pub fn testController(input: *zune.core.Input, m: *Mesh, phMesh: *PlaceHolderMes
     if(input.isKeyReleased(.KEY_EQUAL)){
         err.* *= 1.2;
         changed = true;
+        std.debug.print("Collapse an Edge\n", .{});
     }
 
     if(changed){
         try mesh_simplification.collapseMesh(phMesh, err.*);
         try m.updateMesh(phMesh.vertices, phMesh.indices, 3);
+    }
+
+    if(input.isKeyReleased(.KEY_P)){ // Print vertices
+        std.debug.print("\nVertexCount: {}\n", .{phMesh.vertexCount});
+        var i:usize = 0;
+        while(i < phMesh.vertexCount):(i+=1){
+            util_print.printVector(f32, phMesh.vertices[i*3..][0..3].*);
+        }
     }
 }
 
@@ -247,7 +257,7 @@ pub fn genCube(resourceManager: *zune.graphics.ResourceManager, camera: zune.gra
     const shader = try resourceManager.createTextureShader();
     const material = try resourceManager.createMaterial("cubemat", shader, .{ 1.0, 1.0, 1.0, 1.0 }, texture);
 
-    const ph_cube_mesh = try util.importPHMeshObj(resourceManager, "assets/models/GrassCube/Grass_Block.obj");
+    const ph_cube_mesh = try mesh_import.importPHMeshObj(resourceManager, "assets/models/GrassCube/Grass_Block.obj");
     mesh_processing.scaleMesh(ph_cube_mesh, .{ .x = 1, .y = 1, .z = 1 });
     mesh_processing.moveMesh(ph_cube_mesh, camera.position.subtract(ph_cube_mesh.getBoundingBox().min));
     const cube_mesh = try ph_cube_mesh.toMesh(resourceManager, "dssda", true);

@@ -511,9 +511,9 @@ pub fn storeLineInfo(allocator: Allocator, comptime T: type, bufferedReader: any
     var lineLen = try readUntilDelimiter(bufferedReader, lineBuf.writer(), '\n', false);
     var inLineBlock = true; // Reader is inside block of lines with 'linePreceder'
     var debug: usize = 0;
-    if (subdivider != null) std.debug.print("array capacity: {}\n", .{array.capacity});
+    // if (subdivider != null) std.debug.print("array capacity: {}\n", .{array.capacity});
     while (inLineBlock) : (debug += 1) {
-        if (subdivider != null and array.capacity < 200) std.debug.print("Reading indice line({})...\n", .{debug});
+        // if (subdivider != null and array.capacity < 200) std.debug.print("Reading indice line({})...\n", .{debug});
         // ----- Prepare reading of line -----
         var bufStart: usize = 0;
         valueBufWriter.reset();
@@ -531,11 +531,11 @@ pub fn storeLineInfo(allocator: Allocator, comptime T: type, bufferedReader: any
         if (bufStart != lineLen) try convertFun(T, items[bufStart..lineLen], parseFun, &valueBufWriter, subdivider);
 
         // ----- store values in buffer to array -----
-        if (subdivider != null and array.capacity < 200) std.debug.print("append values of line({})...\n", .{debug});
-        if (subdivider != null and array.capacity < 200) std.debug.print("valueBufWriter.i/capacity: {}/{}\n", .{ valueBufWriter.i, valueBuf.len });
-        if (subdivider != null and array.capacity < 200) std.debug.print("valueBuf: {any}\n", .{valueBuf});
+        // if (subdivider != null and array.capacity < 200) std.debug.print("append values of line({})...\n", .{debug});
+        // if (subdivider != null and array.capacity < 200) std.debug.print("valueBufWriter.i/capacity: {}/{}\n", .{ valueBufWriter.i, valueBuf.len });
+        // if (subdivider != null and array.capacity < 200) std.debug.print("valueBuf: {any}\n", .{valueBuf});
         try array.appendSlice(valueBuf[0..valueBufWriter.i]); // SEGMENTATION FAULT DEBUG == 18 ON TESTSPHERE.OBJ
-        if (subdivider != null and array.capacity < 200) std.debug.print("finished appending values({})...\n", .{debug});
+        // if (subdivider != null and array.capacity < 200) std.debug.print("finished appending values({})...\n", .{debug});
 
         // ----- Load in new line -----
         lineBuf.clearRetainingCapacity();

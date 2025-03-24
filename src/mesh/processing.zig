@@ -531,6 +531,7 @@ pub const PlaceHolderMesh = struct {
         return result;
     }
 
+    // Interweave all data, assumes everything is present
     fn interweave(self: PlaceHolderMesh) ![]f32 {
         const vertexCount = self.vertexCount;
         const b: usize = 8;
@@ -545,6 +546,85 @@ pub const PlaceHolderMesh = struct {
         }
 
         return data;
+    }
+
+    /// Simplifies mesh by de-duplicating meshses. Assumes texcoords are not present, if they are, they will be invalidated.
+    /// The new normal of a de-duped vertex is simply taken as the average of the duplicate vertices.
+    pub fn removeDuplicateVertices(self: *PlaceHolderMesh) !void {
+        const allocator = self.allocator;
+        const vertexCount = self.vertexCount;
+        const vertices = self.vertices;
+        const indices = self.indices;
+        const normals = self.normals;
+
+        var hm = std.AutoHashMap([3]u32, u32).init(allocator);
+        defer hm.deinit();
+        const reservedCapacity: u32 = @intFromFloat(@round(@as(f32,@floatFromInt(vertexCount))*1.2));
+        try hm.ensureTotalCapacity(reservedCapacity);
+
+        // const new_vertices = try self.allocator.alloc(f32, vertexCount*3);
+        const replace_loc: []u32 = try allocator.alloc(u32, vertexCount);
+        defer allocator.free(replace_loc);
+
+        var i:u32 = 0;
+        var j:u32 = 0;
+        while(i<vertexCount):(i+=1){
+            const vertex = vertices[i*3..][0..3].*;
+            const normal = normals[i*3..][0..3].*;
+
+            const round_vertex: [3]f32 = .{ math.roundTo(f32, vertex[0], 6),
+                                            math.roundTo(f32, vertex[1], 6),
+                                            math.roundTo(f32, vertex[2], 6),
+                                            };
+            const rounded_vertex: [3]f32 = .{   if(round_vertex[0] == -0.0) -round_vertex[0] else round_vertex[0],
+                                                if(round_vertex[1] == -0.0) -round_vertex[1] else round_vertex[1],
+                                                if(round_vertex[2] == -0.0) -round_vertex[2] else round_vertex[2],
+                                            };
+            const intVertex: [3]u32 = .{@bitCast(rounded_vertex[0]), @bitCast(rounded_vertex[1]), @bitCast(rounded_vertex[2])};
+
+            const hm_result = hm.getOrPutAssumeCapacity(intVertex);
+            if(!hm_result.found_existing) { // if unique vertex
+                @memcpy(vertices[j*3..][0..3], &vertex); // copy back if not the same location (j <= i always true)
+                @memcpy(normals[j*3..][0..3], &normal);
+
+                hm_result.value_ptr.* = j;
+                replace_loc[i] = hm_result.value_ptr.*; // Store new vertex position
+                j+=1;
+            } else { // duplicate vertex
+                const new_index = hm_result.value_ptr.*; 
+                replace_loc[i] = new_index;
+                
+                const j_normal = normals[new_index*3..][0..3];
+                j_normal[0] += normal[0]; // Add normal of this index NEEDS NORMALIZING LATER
+                j_normal[1] += normal[1];
+                j_normal[2] += normal[2];
+            }
+        }
+        const new_vertexCount = j;
+
+        i = 0;
+        while(i<indices.len):(i+=1){  // replace vertex positions to new location
+            const index = indices[i];
+            indices[i] = replace_loc[index];
+        }
+
+        // ===== Normalize new normals =====
+        i = 0;
+        while(i<new_vertexCount):(i+=1){
+            const normal = self.normals[i*3..][0..3].*;
+            const normalized_normal: [3]f32 = math.vec3returnNormalize(normal);
+            @memcpy(self.normals[i*3..][0..3], &normalized_normal); // Get normalized normal and copy back
+        }
+
+        std.debug.print("Removed {}/{} vertices\n", .{self.vertexCount-new_vertexCount, self.vertexCount});
+        self.vertexCount = new_vertexCount;
+
+        const vertices_trimmed: []f32 = try allocator.realloc(vertices, self.vertexCount*3);
+        const normals_trimmed: []f32 = try allocator.realloc(normals, self.vertexCount*3);
+        
+        self.vertices = vertices_trimmed;
+        self.normals = normals_trimmed;
+
     }
 
     /// Frees all slices stored in struct

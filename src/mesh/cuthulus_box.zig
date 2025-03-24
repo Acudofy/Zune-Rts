@@ -1,5 +1,6 @@
 const std = @import("std");
 const math = @import("../math.zig");
+const util_print = @import("../utils/prints.zig");
 
 const Allocator: type = std.mem.Allocator;
 
@@ -91,7 +92,8 @@ const HalfEdgeError = error{  TooManyNeighbours,
                                     NoQuadricErrors, 
                                     NoEdgeErrors, 
                                     FaceFlip,
-                                    DetachedVertex};
+                                    DetachedVertex,
+                                    SingularFace};
 
 /// Struct to store raw mesh data in halfEdge structure
 pub const HalfEdges = struct {
@@ -117,6 +119,8 @@ pub const HalfEdges = struct {
 
     edge: u32 = 0,
 
+
+    /// Removes duplicates from `mesh`. This will invalidate texCoords and normals.
     pub fn fromPHMesh(mesh: *PlaceHolderMesh) !HalfEdges {
         // ===== Retrieve required info =====
         const allocator = mesh.allocator;
@@ -127,6 +131,9 @@ pub const HalfEdges = struct {
         // std.debug.print("Checking manifold-ness before creating half edges...\n", .{});
         // try indices_manifoldCheck(allocator, indices);
         
+        // ===== De-duplicate mesh vertices =====
+        try mesh.removeDuplicateVertices();
+
         // ===== Find face normals =====
         const faceNormals = try getFaceNormals(allocator, vertices, indices);
 
@@ -427,11 +434,49 @@ pub const HalfEdges = struct {
         const allocator = self.allocator;
         
         // ===== Create edge errors =====
-        if (self.quadricError == null) try self.addErrorMatrices(10.0);
+        if (self.quadricError == null) try self.addErrorMatrices(1000);
 
         if (self.edgeErrors == null) try self.addEdgeErrorsList();
         const edgeErrors = self.edgeErrors.?;
         
+        // // ===== DEBUG PRINT =====
+        // if(self.indices.len < 300) {
+        //     for(self.HE, 0..) | edge, i | {
+        //         const root = edge.origin;
+        //         const tip = self.HE[edge.next].origin;
+        //         const origin_pair: [2]u32 = if(root<tip) [2]u32{root, tip} else [2]u32{tip, root};
+        //         std.debug.print("edge[{}] {}-{} collapses to: ", .{i, origin_pair[0], origin_pair[1]});
+        //         util_print.printVector(f32, self.edgeErrors.?[i].newPos);
+        //     }
+        //     self.print();
+            
+        //     for(0..@divExact(self.faceNormals.len, 3)) | i | {
+        //         const norm = self.faceNormals[i*3..][0..3].*;
+        //         std.debug.print("normal[{:<3}]: ", .{i});
+        //         util_print.printVector(f32, norm);
+        //     } 
+            
+        //     const qe1 = self.quadricError.?[5];
+        //     const t1:[16]f64 = .{
+        //     qe1[0], qe1[1], qe1[2], qe1[3],
+        //     qe1[1], qe1[4], qe1[5], qe1[6],
+        //     qe1[2], qe1[5], qe1[7], qe1[8],
+        //     qe1[3], qe1[6], qe1[8], qe1[9]};
+
+        //     const qe2 = self.quadricError.?[6];
+        //     const t2:[16]f64 = .{
+        //     qe2[0], qe2[1], qe2[2], qe2[3],
+        //     qe2[1], qe2[4], qe2[5], qe2[6],
+        //     qe2[2], qe2[5], qe2[7], qe2[8],
+        //     qe2[3], qe2[6], qe2[8], qe2[9]};
+            
+        //     std.debug.print("\nquadric error of vertex 5 before collapse:\n", .{});
+        //     util_print.print_CM_4Matd(t1);
+
+        //     std.debug.print("\nquadric error of vertex 6 before collapse:\n", .{});
+        //     util_print.print_CM_4Matd(t2);
+        // }
+        // // ===== DEBUG PRINT =====
 
         // printEdgeHeader();
         // for([_]usize{2268, 2271, 3893, 2279, 2277, 2280, 2281, 2282, 2275, 2276, 2269, 2270, 2265, 2266, 2267, 2262, 2263, 3890, 3888, 3889, 3894, 2256, 2259, 2261, 2260, 2284, 2285, 2280, 2281, 2282, 2277}) |edge| self.printEdge(edge);
@@ -447,11 +492,26 @@ pub const HalfEdges = struct {
             onlyErrors = true;
             var chainExists = true;
 
+            // ===== DEBUG PRINT =====
+            // std.debug.print("looping\n", .{});
+            // ===== DEBUG PRINT =====
+            
+
             while(LE.getEdgeIndexWithLowestError()) | edge |{
                 self.edge = edge;
                 var EndOfChain = false;
+                // ===== DEBUG PRINT ======
+                // if (self.edge == 64){
+                //     printEdgeHeader();
+                //     for([_]u32{16, 15, 17, 58})|e|self.printEdge(e);
+                //     std.debug.print("\n", .{});
+                //     // std.debug.print("\nedge[16]:", .{});
+                //     for([_]u32{64, 51, 49, 16, 60, 33, 16}) | e | std.debug.print("edge[{}] inChain: {}\n", .{e, LE.inChain(e)});
+                // }
+                // ===== DEBUG PRINT ======
+
                 // std.debug.print("error of edge[{}] ({}): {}/{}\n", .{edge, LE.inChain(edge), LE.edgeErrors[edge].err, errThreshold});
-                if(self.edgeErrors.?[edge].err >= errThreshold) return error.Unexpected;
+                // if(self.edgeErrors.?[edge].err >= errThreshold) return error.Unexpected;
 
                 // ===== Collapse edge =====
                 // if(!LE.inChain(2271)) return error.Unexpected;
@@ -462,8 +522,16 @@ pub const HalfEdges = struct {
 
 
                 self.collapseEdge() catch | err | switch (err) {
-                    HalfEdgeError.FaceFlip, HalfEdgeError.DetachedVertex, HalfEdgeError.NotEnoughNeighbours, HalfEdgeError.TooManyNeighbours => {
-                        try LE.moveStartUp();
+                    HalfEdgeError.FaceFlip, HalfEdgeError.DetachedVertex, 
+                    HalfEdgeError.NotEnoughNeighbours, HalfEdgeError.TooManyNeighbours, 
+                    HalfEdgeError.SingularFace =>{
+                        // std.debug.print("collapse failed: {}\n\n", .{e});
+                        LE.moveStartUp() catch | move_err | switch (move_err) { // Move start up as current edge cannot be collapsed
+                            LinkedErrorsErrors.EndOfChain => { // If edge_start cannot be moved up
+                                break; // Break to reset the chain
+                            },
+                            else => return move_err,
+                        };
                         continue;
                     },
                     else => return err,
@@ -483,11 +551,11 @@ pub const HalfEdges = struct {
                         EndOfChain = true;
                     },
                     LinkedErrorsErrors.EmptyChain => {
-                        std.debug.print("removeFace1: returned emptyChain\n", .{});
+                        // std.debug.print("removeFace1: returned emptyChain\n", .{});
                         chainExists = false; // No more edges in chain link
                     },
                     LinkedErrorsErrors.AllItemsExceedError => {
-                        std.debug.print("removeFace1: returned AllItemsExceedError\n", .{});
+                        // std.debug.print("removeFace1: returned AllItemsExceedError\n", .{});
                         chainExists = false; // No more collapsable edges
                     },
                     else => return err, // Unexpected error
@@ -497,12 +565,12 @@ pub const HalfEdges = struct {
                         EndOfChain = true;
                     },
                     LinkedErrorsErrors.EmptyChain => {
-                        std.debug.print("removeFace2: returned emptyChain\n", .{});
+                        // std.debug.print("removeFace2: returned emptyChain\n", .{});
                         chainExists = false; // No more edges in chain link
                     },
                     LinkedErrorsErrors.AllItemsExceedError => {
                         self.printEdgeChain(removeEdge2, LE);
-                        std.debug.print("removeFace2: returned AllItemsExceedError\n", .{});
+                        // std.debug.print("removeFace2: returned AllItemsExceedError\n", .{});
                         chainExists = false; // No more collapsable edges
                     },
                     else => return err, // Unexpected error
@@ -510,8 +578,12 @@ pub const HalfEdges = struct {
 
                 debug += 1;
 
+                // // ===== DEBUG =====
+                // chainExists = false;
+                // // ===== DEBUG =====
+
                 if(EndOfChain or !chainExists) {
-                    std.debug.print("Exit loop via EndOfChain({}) or !chainExists({})\n", .{EndOfChain, !chainExists});
+                    // std.debug.print("Exit loop via EndOfChain({}) or !chainExists({})\n", .{EndOfChain, !chainExists});
                     break; // end of chain has been reached by start -> reset start
                 }
             }
@@ -526,7 +598,30 @@ pub const HalfEdges = struct {
         // ===== Alter placeholder mesh according to LinkedErrors =====
         // std.debug.print("Alter PHMesh:\n", .{});
 
+        // ===== DEBUG PRINT =====
+        // {
+        //     LE.printChainItems(100);
+        //     const qe1 = self.quadricError.?[5];
+        //     const t1:[16]f64 = .{
+        //     qe1[0], qe1[1], qe1[2], qe1[3],
+        //     qe1[1], qe1[4], qe1[5], qe1[6],
+        //     qe1[2], qe1[5], qe1[7], qe1[8],
+        //     qe1[3], qe1[6], qe1[8], qe1[9]};
 
+        //     const qe2 = self.quadricError.?[6];
+        //     const t2:[16]f64 = .{
+        //     qe2[0], qe2[1], qe2[2], qe2[3],
+        //     qe2[1], qe2[4], qe2[5], qe2[6],
+        //     qe2[2], qe2[5], qe2[7], qe2[8],
+        //     qe2[3], qe2[6], qe2[8], qe2[9]};
+            
+        //     std.debug.print("\nquadric error of vertex 5 after collapse:\n", .{});
+        //     util_print.print_CM_4Matd(t1);
+
+        //     std.debug.print("\nquadric error of vertex 6 after collapse:\n", .{});
+        //     util_print.print_CM_4Matd(t2);
+        // }
+        // ===== DEBUG PRINT =====
         try LE.updateToPHMesh(self.HE, self.mesh);
 
         
@@ -534,12 +629,24 @@ pub const HalfEdges = struct {
 
     /// Modify self to collapse edge, stores alteredEdgeErrInfo in `self.alteredErrorsBuffer`
     pub fn collapseEdge(self: *HalfEdges) !void {
-        const d = false; // self.edge == 2281;
-        if(d){
-            std.debug.print("edge[{}]: {any}\n", .{2268, self.HE[2268]});
-            std.debug.print("edge[{}]: {any}\n", .{2271, self.HE[2271]});
-        }
-
+        // // ===== DEBUG PRINT =====
+        // if(new_pos_[0] == 0 and new_pos_[1] == 0 and new_pos_[2] == 0){
+        // {
+        //     const new_pos = self.edgeErrors.?[self.edge].newPos;
+        //     std.debug.print("Collapsing edge[{}] to \n", .{self.edge});
+        //     util_print.printVector(f32, new_pos);
+            
+        //     const root = self.HE[self.edge].origin;
+        //     const tip = self.HE[self.HE[self.edge].next].origin;
+        //     const pair: [2]u32 = if(root<tip) .{root, tip} else .{tip, root};
+        //     std.debug.print("collapsing edge[{}]: {}-{}\n", .{self.edge, pair[0], pair[1]});
+        //     std.debug.print("{}: ", .{pair[0]});
+        //     util_print.printVector(f32, self.vertices[pair[0]*3..][0..3].*);
+            
+        //     std.debug.print("{}: ", .{pair[1]});
+        //     util_print.printVector(f32, self.vertices[pair[1]*3..][0..3].*);
+        // }
+        // // ===== DEBUG PRINT =====
         const currEdge = self.edge;
         const edgeBase = &self.HE[0];
 
@@ -547,26 +654,22 @@ pub const HalfEdges = struct {
         if (self.quadricError == null) return HalfEdgeError.NoQuadricErrors;
         if (self.edgeErrors == null) return HalfEdgeError.NoEdgeErrors;
 
+        // ===== Check collapsed-face is not singular =====
+        for(0..2)|_|{
+            const new_pos = self.edgeErrors.?[self.edge].newPos;
+
+            const oposing_origin = self.HE[self.getHalfEdge().prev].origin;
+            const oposing_vertex = self.vertices[oposing_origin*3..][0..3];
+            if(new_pos[0] == oposing_vertex[0] and new_pos[1] == oposing_vertex[1] and new_pos[2] == oposing_vertex[2]){
+                return HalfEdgeError.SingularFace;
+            }
+            self.flip();
+        }
+
         // ===== Fetch mutual neighbours in buffers =====
         const commonNeighbourTuple = try self.fetchCommonNeighbours();
         const onBound = commonNeighbourTuple.onBoundary;
         const twinEdges = commonNeighbourTuple.edgesFromMSV;
-
-        // if(d) std.debug.print("twinEdges[0]: ({}, {})\n", .{indexOfPtr(HalfEdge, edgeBase, twinEdges[0][0]), indexOfPtr(HalfEdge, edgeBase, twinEdges[0][1])});
-        // if(d) std.debug.print("twinEdges[1]: ({}, {})\n", .{indexOfPtr(HalfEdge, edgeBase, twinEdges[1][0]), indexOfPtr(HalfEdge, edgeBase, twinEdges[1][1])});
-
-        if(d) {
-            printEdgeHeader();
-            self.printEdgeWithOrigin(self.HE[2280].origin);
-            // for([_]usize{2298, 2301, 3897, 2299, 2300, 2298, 2322} ) | edge | self.printEdge(edge);
-            // for([_]usize{2281, 2303, 2277, 2268, 2301, 2324, 2271, 2298, 2282, 2324, 2279, 2299, 2256, 2257, 2323, 3888, 3890, 3891, 3893, 3892, 3899, 3905, 3904, 3903, 3902, 2321, 2300, 2299} ) | edge | self.printEdge(edge);
-            std.debug.print("\n", .{});
-            var i:usize = 3895;
-            while(i != 3897):(i = self.HE[i].next){
-                self.printEdge(i);
-            }
-            // // for([_]usize{3895, 3897} ) | edge | self.printEdge(edge);
-        }
 
         // ===== Merge vertex origins =====
         // Remove vertex with higher index
@@ -604,7 +707,7 @@ pub const HalfEdges = struct {
         @memcpy(self.vertices[mergedOrigin * 3 ..][0..3], &self.edgeErrors.?[currEdge].newPos);
 
         // ===== Set self.indices =====
-        if (onBound) return error.Unexpected;
+        // if (onBound) return error.Unexpected;
         // std.debug.print("Modifying indices(1)...\n", .{});
         self.modifyIndices(&self.normalBuffer1, &self.indexBuffer1, mergedOrigin, removedOrigin) catch |err| {
             // std.debug.print("Restoring collapse(1)...\n", .{});
@@ -613,10 +716,6 @@ pub const HalfEdges = struct {
             try self.restoreCollapse(onBound, null, removedOrigin, true, false);
             return err;
         };
-        if(d){
-            std.debug.print("edge[{}]: {any}\n", .{2268, self.HE[2268]});
-            std.debug.print("edge[{}]: {any}\n", .{2271, self.HE[2271]});
-        }
 
         self.flip();
         // std.debug.print("Modifying indices(2)...\n", .{});
@@ -627,10 +726,6 @@ pub const HalfEdges = struct {
             return err;
         };
 
-        if(d){
-            std.debug.print("edge[{}]: {any}\n", .{2268, self.HE[2268]});
-            std.debug.print("edge[{}]: {any}\n", .{2271, self.HE[2271]});
-        }
         
         // ===== Alter twins =====
         // std.debug.print("Altering twins...\n", .{});
@@ -644,7 +739,21 @@ pub const HalfEdges = struct {
         while(i<twinEdges.len):(i+=1){
         // for (twinEdges[0..], 0..) | *twinEdge, i| {
             const twinEdge = twinEdges[i];
-            if (onBound and i == 1) continue; // for boundary edge -> only 1 neighbouring face
+            if (onBound and i == 1) { // for boundary edge -> only 1 neighbouring face -> Store the prev-/next-boundary instead
+                if(self.HE[currEdge].i_face == null){ // if collapsing edge is bordering the boundary
+                    twinInfos[i].inner1 = self.HE[currEdge].prev;
+                    twinInfos[i].outer1 = self.HE[currEdge].next;
+                } else{
+                    const currTwin = self.HE[currEdge].twin;
+                    twinInfos[i].inner1 = self.HE[currTwin].prev;
+                    twinInfos[i].outer1 = self.HE[currTwin].next;
+                }
+                const i_prev = twinInfos[i].inner1;
+                const i_next = twinInfos[i].outer1;
+                self.HE[i_prev].next = i_next;
+                self.HE[i_next].prev = i_prev;
+                continue;
+            }
 
             // ----- for edges check if they are on MNF -----
             if (twinEdge[0].i_face == collapsingFaces[0] or twinEdge[0].i_face == collapsingFaces[1]) { // first twinEdge is on MNF -> Second edge is outside of MNF
@@ -656,7 +765,6 @@ pub const HalfEdges = struct {
                     .inner2 = twinEdge[1].twin,
                     .outer2 = @intCast(indexOfPtr(HalfEdge, edgeBase, twinEdge[1])),
                 };
-                if(d) std.debug.print("twinInfos[{}]: {any}\n", .{i, twinInfos[i]});
             } else { // second twinEdge is inside shared face
                 // ----- Store original edge pairs -----
                 twinInfos[i] = .{
@@ -665,17 +773,20 @@ pub const HalfEdges = struct {
                     .inner2 = @intCast(indexOfPtr(HalfEdge, edgeBase, twinEdge[1])),
                     .outer2 = twinEdge[1].twin,
                 };
-                if(d) std.debug.print("twinInfos[{}]: {any}\n", .{i, twinInfos[i]});
             }
 
             // ----- make edges outside of MNF 'skip' MNF -----
+            // ===== DEBUG PRINT =====
+            if(currEdge == 60) {
+                if(i == 0) std.debug.print("onBoundary: {}\n", .{onBound});
+                std.debug.print("\ntwinInfos[{0}].inner1 = {1}\ntwinInfos[{0}].outer1 = {2}\ntwinInfos[{0}].inner2 = {3}\ntwinInfos[{0}].outer2 = {4}\n", .{i, twinInfos[i].inner1, twinInfos[i].outer1, twinInfos[i].inner2, twinInfos[i].outer2});
+            }
+            // ===== DEBUG PRINT =====
             const i_out1 = twinInfos[i].outer1; // Index of edges outside of shared face
             const i_out2 = twinInfos[i].outer2;
             self.HE[i_out1].twin = i_out2;
             self.HE[i_out2].twin = i_out1;
         }
-
-        // if(d) std.debug.print("twinInfos: {any}\n", .{twinInfos});
 
         // ===== Verify if MSF are still valid =====
         // Condition for validity is that shared faces should adjoint at least 1 additional face 
@@ -687,12 +798,6 @@ pub const HalfEdges = struct {
                 return HalfEdgeError.DetachedVertex; // Vertex has single connecting edge but no neighbouring faces
             }
         }
-
-        if(d){
-            std.debug.print("edge[{}]: {any}\n", .{2268, self.HE[2268]});
-            std.debug.print("edge[{}]: {any}\n", .{2271, self.HE[2271]});
-        }
-
 
         // ===== Merge quadric error =====
         // std.debug.print("Merging quadric errors\n", .{});
@@ -758,11 +863,6 @@ pub const HalfEdges = struct {
             }
         }
 
-        if(d){
-            std.debug.print("edge[{}]: {any}\n", .{2268, self.HE[2268]});
-            std.debug.print("edge[{}]: {any}\n", .{2271, self.HE[2271]});
-        }
-
         self.edge = currEdge;
     }
 
@@ -799,6 +899,13 @@ pub const HalfEdges = struct {
 
     /// Get error of vertex if you collapse current vertex
     pub fn getEdgeError(self: HalfEdges) !EdgeErrInfo {
+        
+        // // ===== DEBUG PRINT =====
+        // // {
+        //     const pair: [2]u32 = if(root<tip) [2]u32{root, tip} else [2]u32{tip, root};
+        //     std.debug.print("getEdgeError of {}-{}\n", .{pair[0], pair[1]});
+        // // }
+        // // ===== DEBUG PRINT =====
         if (self.quadricError == null) return HalfEdgeError.NoQuadricErrors;
 
         const i_1 = self.HE[self.edge].origin;
@@ -821,10 +928,47 @@ pub const HalfEdges = struct {
                             m[8], m[9], m[10], qe1[8] + qe2[8],
                             m[12], m[13], m[14], qe1[9] + qe2[9]};
 
-        var M:[16]f64 = undefined;
-        math.eigen_mat4d_robust_inverse(&m, &M);
+        // var M:[16]f64 = undefined;
+        // math.eigen_mat4d_robust_inverse(&m, &M);
 
-        var v_optimal: [4]f64 = M[12..16].*;  
+        // var v_optimal: [4]f64 = M[12..16].*;  
+
+        // ===== Determine center of edge =====
+        const vertices = self.vertices;
+        const root = self.getHalfEdge().origin;
+        const tip = self.HE[self.getHalfEdge().next].origin;
+        const v0: [3]f64 = .{@as(f64, @floatCast(vertices[root*3] + vertices[tip*3]))/2, @as(f64, @floatCast(vertices[root*3+1] + vertices[tip*3+1]))/2, @as(f64, @floatCast(vertices[root*3+2] + vertices[tip*3+2]))/2};
+
+
+        // ===== eigen biased-solution =====
+        var v_optimal: [4]f64 = undefined;
+        _ = math.eigen_optimal_vertex(&t, &v0, 0.001, &v_optimal);
+        // std.debug.print("solved: {}\n", .{solved});
+        // ===== eigen biased-solution =====
+        
+        // // ===== DEBUG PRINT =====
+        // {
+        //     if(v_optimal[0] < -0.1 or v_optimal[1] < -0.1 or v_optimal[2] < -0.1){
+        //         std.debug.print("v_optimal is inverse: ", .{});
+        //         util_print.printVector(f64, v_optimal[0..3].*);
+        //         std.debug.print("v0: ", .{});
+        //         util_print.printVector(f64, v0);
+
+
+        //         // std.debug.print("Error matrix:\n", .{});
+        //         // util_print.print_CM_4Matd(m);
+                
+        //     } else {
+        //         std.debug.print("v_optimal is correct\n", .{});                
+        //     }
+
+        //     if(self.edge == 27){
+        //         std.debug.print("qe[5]\n", .{});
+        //     }
+        //     // if self.edge()
+        //     // util_print(qe1)
+        // }
+        // // ===== DEBUG PRINT =====
 
         var rowVector: [4]f64 = undefined;
         math.eigen_vec4d_multiply(&t, &v_optimal, &rowVector);
@@ -922,11 +1066,14 @@ pub const HalfEdges = struct {
         if (twinInfos) | twinInfo | {
             const edges = self.HE;
             for (twinInfo, 0..) | twins, i | {
-                if (onBoundary and i == 1) continue; // if onboundary -> Only 1 neighbouring face i.e. 1 set of twins
-                
-                // if (twins.inner1 == twins.outer1 or twins.inner2 == twins.outer2) {
-                //     // std.debug.print("\n\n============ INVALID TWINS ================\n{any}\n====================================\n\n", .{twins});
-                // }
+                if (onBoundary and i == 1) { // if onboundary -> Only 1 neighbouring face i.e. 1 set of twins -> Restore boundary ordering instead
+                    // Hopefully this works: untested
+                    const boundaryEdge = if(self.getHalfEdge().i_face == null) self.edge else self.getHalfEdge().twin;
+                    edges[twins.inner1].next = boundaryEdge;
+                    edges[twins.outer1].prev = boundaryEdge;
+                    continue;
+                }
+
                 edges[twins.inner1].twin = twins.outer1;
                 edges[twins.outer1].twin = twins.inner1;
                 edges[twins.inner2].twin = twins.outer2;
@@ -1074,7 +1221,8 @@ pub const HalfEdges = struct {
         try self.fetchNeighbours(&self.buffer2, true);
         self.edge = currEdge; // revert to original edge position
 
-        const onBound = boundary1 and boundary2; // edge only aligned to 1 face
+        const onBound = boundary1 or boundary2; // edge only aligned to 1 face
+        // std.debug.print("onBound: {}\n", .{onBound});
 
         var twinEdge1: [2]*HalfEdge = undefined; // Store halfedges from common neighbouring vertex to start and end of collapsing edge
         var twinEdge2: [2]*HalfEdge = undefined;
@@ -1083,14 +1231,18 @@ pub const HalfEdges = struct {
         var n_count: u32 = 0; // shared neighbours count
         const n_desired:u32 = switch (onBound) {true => 1, false => 2};
 
-        // std.debug.print("self.buffer2.items: {any}\n", .{self.buffer2.items});
+        // for (self.buffer2.items, 0..)|item2, k| std.debug.print("self.buffer2.items[{}]: {}\n", .{k, item2.origin});
         for (self.buffer1.items) | item | {
+                // std.debug.print("buf1.item.origin: {}\n", .{item.origin});
             if (getIndexOfVertex(self.buffer2.items, item.origin)) |pos| { // check for item of buffer 1 of the vertex is also found in buffer2
-                // std.debug.print("item.origin: {}\n", .{item.origin});
+                // std.debug.print("flag0\n", .{});
                 switch (n_count) {
                     0 => {
                         twinEdge1 = .{ item, self.buffer2.items[pos]};
-                        if (onBound) break; // if on boundary -> only 1 face
+                        if (onBound) {
+                            n_count+=1;
+                            break; // if on boundary -> only 1 face
+                        }
                         },
                     1 => twinEdge2 = .{ item, self.buffer2.items[pos] },
                     else => return HalfEdgeError.TooManyNeighbours,
@@ -1098,7 +1250,12 @@ pub const HalfEdges = struct {
                 n_count += 1;
             }
         }
-        if (n_count < n_desired) return HalfEdgeError.NotEnoughNeighbours;
+        if (n_count < n_desired) {
+            // std.debug.print("buffer1:\n{any}\n", .{self.buffer1.items});
+            // std.debug.print("buffer2:\n{any}\n", .{self.buffer2.items});
+            // std.debug.print("n_count: {}\n", .{n_count});
+            return HalfEdgeError.NotEnoughNeighbours;
+        }
 
         const twinEdges: [2][2]*HalfEdge = switch (onBound) {
             true => .{[2]*HalfEdge{twinEdge1[0], twinEdge1[1]}, undefined},
@@ -1138,6 +1295,7 @@ pub const HalfEdges = struct {
         // }
 
         if (exclude_first and p) std.debug.print("buf[-1]: {}/{} {?}\n", .{self.edge, self.HE.len, self.getHalfEdge().i_face});
+        // if (exclude_first and p) if (self)
         if (exclude_first) self.rotEndCCW(); // skip first edge
         if(p) std.debug.print("buf[0]: {}\n", .{self.edge});
         // if(p) self.printEdge(self.edge);
@@ -1152,7 +1310,7 @@ pub const HalfEdges = struct {
         // ----- Find remaining neighbours -----
         var debug:u32 = 1;
         while (buffer.getLast() != buffer.items[0]) { // not looped back yet
-            // std.debug.print("{}|", .{buffer.getLast().});
+            // std.debug.print("{}|", .{buffer.getLast().origin});
             debug += 1;
             if (p and debug>10) return error.Unexpected;
             self.rotEndCCW(); // next edge
@@ -1161,7 +1319,7 @@ pub const HalfEdges = struct {
             const he = self.getHalfEdge();
             try buffer.append(he);
         }
-        // if(p) std.debug.print("\n", .{});
+        if(p) std.debug.print("\n", .{});
 
         _ = buffer.pop(); // remove duplicate
         if (exclude_first) _ = buffer.pop(); // exclude self.edge <- second to last edge in list
@@ -1174,6 +1332,9 @@ pub const HalfEdges = struct {
     fn getIndexOfVertex(array: []*HalfEdge, vertex: u32) ?u32 {
         const bufferSize = array.len;
         var i: u32 = 0;
+        // while(i<array.len):(i+=1){
+        //     if(array[i].origin == vertex) return i;
+        // }
         while (i + 3 < bufferSize) : (i += 4) { // check only full loads
             const load: @Vector(4, u32) = .{ array[i].origin, array[i + 1].origin, array[i + 2].origin, array[i + 3].origin };
             if (std.simd.firstIndexOfValue(load, vertex)) |ind| {
@@ -1235,7 +1396,7 @@ pub const HalfEdges = struct {
                 const a = V_norm_boundary[0];
                 const b = V_norm_boundary[1];
                 const c = V_norm_boundary[2];
-                const d = a*V_1[0] + b*V_1[1] + c*V_1[2];
+                const d = -(a*V_1[0] + b*V_1[1] + c*V_1[2]);
                 
                 const errBoundMat: ErrorMatrix = .{ a * a*penalty,  a * b*penalty,  a * c*penalty,  a * d*penalty,
                                                                     b * b*penalty,  b * c*penalty,  b * d*penalty,
@@ -1382,6 +1543,23 @@ pub const HalfEdges = struct {
         std.debug.print("edge[{}] ({})->", .{i, linkedList.inChain(i)});
         }
         std.debug.print("edge[{}] ({})->", .{i, linkedList.inChain(i)});
+    }
+
+    pub fn print(self: HalfEdges) void {
+        const vertexCount = @divExact(self.vertices.len,3);
+        const triangleCount = @divExact(self.indices.len, 3);
+        
+        std.debug.print("------ Vertices ------\n", .{});
+        for(0..vertexCount)|i|{
+            std.debug.print("{:<3}: ", .{i});
+            util_print.printVector(f32, self.vertices[i*3..][0..3].*);
+        }
+
+        std.debug.print("------ Indices ------\n", .{});
+        for(0..triangleCount)|i|{
+            std.debug.print("{:<3}: ", .{i});
+            util_print.printVector(u32, self.indices[i*3..][0..3].*);
+        }
     }
 };
 
@@ -1782,13 +1960,15 @@ pub const LinkedErrors = struct {
     /// 
     /// If removal returns error, attempts to finish removals before returning error.
     pub fn removeFaceOfEdge(self: *LinkedErrors, edgeIndex: u32, halfEdges: []HalfEdge) !void {
-        // std.debug.print("removing face of {}\n", .{edgeIndex});
+        const d = false;
+        if (d) std.debug.print("removing face of {}\n", .{edgeIndex});
         var i:u32 = edgeIndex;
         
         var EndOfChain: bool = false;
         var EmptyChain: bool = false;
         var AllItemsExceedError: bool = false;
         
+        if (d) std.debug.print("removing edge {}\n", .{i});
         self.removeItemCareful(i) catch | err | switch (err) {
             LinkedErrorsErrors.EndOfChain => EndOfChain = true,
             LinkedErrorsErrors.EmptyChain => EmptyChain = true,
@@ -1799,6 +1979,7 @@ pub const LinkedErrors = struct {
         if(halfEdges[edgeIndex].i_face != null) { // if original edge is adjacent to defined face
             i = halfEdges[i].next;
             while(i != edgeIndex):(i = halfEdges[i].next) {
+                if (d) std.debug.print("removing edge {}\n", .{i});
                 self.removeItemCareful(i) catch | err | switch (err) {
                     LinkedErrorsErrors.EndOfChain => EndOfChain = true,
                     LinkedErrorsErrors.EmptyChain => EmptyChain = true,
@@ -2146,7 +2327,7 @@ pub const LinkedErrors = struct {
         // ===== Store face-adjacent halfEdges =====
         const longEdges: []HalfEdge = try allocator.alloc(HalfEdge, LL.len);
 
-        var i:u32 = self.linkStart;
+        var i:u32 = self.valueFlags.items[0].index;
         var j:u32 = 0; // Count of face-adjacent edges
         while(i < LL_length):(i = LL[i].i_next) {
             if (halfEdges[i].i_face != null) { // go through chain and store edges which have a valid face
@@ -2154,7 +2335,32 @@ pub const LinkedErrors = struct {
                 j+=1;
             }
         }
+
+        // // ===== DEBUG PRINT =====
+        // {
+        // var faceCounter: [18]u8 = .{0} ** 18;
+        // i = self.valueFlags.items[0].index;
+        // std.debug.print("\nedges in chain:\n", .{});
+        // std.debug.print("Edge       | Origin     | Twin       | Next       | Prev       | i_face     |\n", .{});
+        // while(i<LL_length):(i = LL[i].i_next){
+        //     const edge = halfEdges[i];
+        //     const edge_ind = i;
+        //     const origin = edge.origin;
+        //     const twin = edge.twin;
+        //     const next_ = edge.next;
+        //     const prev = edge.prev;
+        //     const face = edge.i_face;
+        //     std.debug.print("{d:<10} | {d:<10} | {d:<10} | {d:<10} | {d:<10} | {?:<10} |\n", .{edge_ind, origin, twin, next_, prev, face});
+        //     if(face!=null)faceCounter[@divExact(face.?, 3)] +=1;
+        // }
+
+        // for(faceCounter, 0..) |count, k | {
+        //     std.debug.print("face[{}]: {}\n", .{k, count});
+        // }
+        // }
         // std.debug.print("j: {}\n", .{j});
+        // // ===== DEBUG PRINT =====
+
         const faceCount = @divExact(j, 3);
 
         const edges: []HalfEdge = try allocator.realloc(longEdges, j); // trim longedges to valid edges
@@ -2277,15 +2483,51 @@ pub const LinkedErrors = struct {
         //     }
         //     var uniqueVertices:usize = 0;
         //     for(intactVertex) | b | {if(b) uniqueVertices += 1;}
-        //     std.debug.print("vertexCount: {}\n", .{uniqueVertices});
-        //     const indices_prior = try allocator.realloc(indices_prior_long, k*3);
+        //     std.debug.print("vertexCount: {}\nEdges.len: {}\n", .{uniqueVertices, edges.len});
 
-        //     std.debug.print("Checking manifold-ness during mesh-assembly in indices_prior...\n", .{});
-        //     try indices_manifoldCheck(allocator, indices_prior);
+        //     std.debug.print("\nedges:\n", .{});
+        //     std.debug.print("Edge       | Origin     | Twin       | Next       | Prev       | i_face     |\n", .{});
+        //     for(edges, 0..)| edge, k2 | {
+        //         const edge_ind = k2;
+        //         const origin = edge.origin;
+        //         const twin = edge.twin;
+        //         const next_ = edge.next;
+        //         const prev = edge.prev;
+        //         const face = edge.i_face;
+        //         std.debug.print("{d:<10} | {d:<10} | {d:<10} | {d:<10} | {d:<10} | {?:<10} |\n", .{edge_ind, origin, twin, next_, prev, face});
+        //     }
+
+        //     const indices_prior = try allocator.realloc(indices_prior_long, k*3);
+        //     defer allocator.free(indices_prior);
+
+        //     std.debug.print("indices_prior:\n", .{});
+        //     for(0..k)| k2|{
+        //         util_print.printVector(u32, indices_prior[k2*3..][0..3].*);
+        //     }
+
+        //     var hm = std.AutoHashMap([3]u32, bool).init(allocator);
+        //     defer hm.deinit();
+        //     std.debug.print("Vertices:\n", .{});
+        //     for(0..mesh.vertexCount)| k2|{
+        //         const vertex = mesh.vertices[k2*3..][0..3].*;
+        //         std.debug.print("{:<3}({:<3}): ", .{k2, intactVertex[k2]});
+        //         util_print.printVector(f32, vertex);
+                
+        //         const vertexKey: [3]u32 = .{@as(u32, @bitCast(math.roundTo(f32, @abs(vertex[0]), 6))), 
+        //                                     @as(u32, @bitCast(math.roundTo(f32, @abs(vertex[1]), 6))),
+        //                                     @as(u32, @bitCast(math.roundTo(f32, @abs(vertex[2]), 6)))}; // Assumes values always larger then 0
+        //         if(intactVertex[k2]){
+        //             const hm_result = try hm.getOrPut(vertexKey);
+        //             if(hm_result.found_existing){
+        //                 return error.Unexpected;
+        //             }
+        //         }
+        //     }
+
+        //     // std.debug.print("Checking manifold-ness during mesh-assembly in indices_prior...\n", .{});
+        //     // try indices_manifoldCheck(allocator, indices_prior);
 
         // }
-
-
         // // ===== Debug print =====
 
 
